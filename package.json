@@ -1,0 +1,23 @@
+{
+  "name": "glitch-deal-scraper",
+  "version": "2.0.0",
+  "description": "Monitors major retailers 24/7 for price glitches â 70%+ off errors â and fires instant Discord alerts with direct buy links.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "postinstall": "npx playwright install chromium --with-deps"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "better-sqlite3": "^9.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "node-cron": "^3.0.3",
+    "nodemailer": "^6.9.7",
+    "playwright": "^1.42.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
