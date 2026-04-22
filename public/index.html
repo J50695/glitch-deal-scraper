@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ð¥ Glitch Deal Scraper</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d0d;
+      color: #f0f0f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ââ Header ââ */
+    header {
+      background: linear-gradient(135deg, #1a0000 0%, #1a0a00 100%);
+      border-bottom: 2px solid #FF3333;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-left h1 {
+      font-size: 22px;
+      font-weight: 800;
+      color: #FF3333;
+      letter-spacing: -0.5px;
+    }
+
+    .header-left p {
+      font-size: 12px;
+      color: #888;
+      margin-top: 2px;
+    }
+
+    .header-right {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #33FF66;
+      box-shadow: 0 0 8px #33FF66;
+      animation: pulse 2s infinite;
+    }
+
+    .status-dot.running {
+      background: #FF9900;
+      box-shadow: 0 0 8px #FF9900;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+
+    .btn-primary {
+      background: #FF3333;
+      color: #fff;
+    }
+    .btn-primary:hover  { background: #FF5555; }
+    .btn-primary:active { transform: scale(0.97); }
+
+    /* ââ Stats Bar ââ */
+    .stats-bar {
+      display: flex;
+      gap: 12px;
+      padding: 14px 24px;
+      background: #141414;
+      border-bottom: 1px solid #222;
+      flex-wrap: wrap;
+    }
+
+    .stat-card {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 10px 16px;
+      min-width: 120px;
+      flex: 1;
+    }
+
+    .stat-label { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-value { font-size: 22px; font-weight: 800; color: #FF3333; margin-top: 2px; }
+    .stat-value.green  { color: #33FF66; }
+    .stat-value.amber  { color: #FFD700; }
+    .stat-value.normal { color: #f0f0f0; }
+
+    /* ââ Filters ââ */
+    .filters {
+      padding: 14px 24px;
+      background: #111;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      border-bottom: 1px solid #1e1e1e;
+    }
+
+    .filter-label { font-size: 12px; color: #666; }
+
+    .filter-btn {
+      padding: 6px 14px;
+      border-radius: 20px;
+      border: 1px solid #333;
+      background: transparent;
+      color: #888;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .filter-btn:hover  { border-color: #FF3333; color: #FF3333; }
+    .filter-btn.active { background: #FF3333; border-color: #FF3333; color: #fff; }
+
+    .filter-input {
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid #333;
+      background: #1a1a1a;
+      color: #f0f0f0;
+      font-size: 13px;
+      width: 200px;
+      outline: none;
+    }
+    .filter-input:focus { border-color: #FF3333; }
+
+    /* ââ Deal Grid ââ */
+    .deals-header {
+      padding: 16px 24px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .deals-header h2 { font-size: 15px; color: #888; font-weight: 500; }
+    .deals-count     { font-size: 13px; color: #555; }
+
+    .deal-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 14px;
+      padding: 0 24px 24px;
+    }
+
+    /* ââ Deal Card ââ */
+    .deal-card {
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      overflow: hidden;
+      transition: border-color 0.15s, transform 0.15s;
+      position: relative;
+    }
+
+    .deal-card:hover {
+      border-color: #FF3333;
+      transform: translateY(-2px);
+    }
+
+    .deal-card.high  { border-left: 3px solid #FF1111; }
+    .deal-card.med   { border-left: 3px solid #FF8800; }
+    .deal-card.low   { border-left: 3px solid #FFCC00; }
+
+    .deal-badge {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: #FF3333;
+      color: #fff;
+      font-weight: 900;
+      font-size: 14px;
+      padding: 4px 10px;
+      border-radius: 20px;
+    }
+
+    .deal-image {
+      width: 100%;
+      height: 140px;
+      object-fit: contain;
+      background: #1e1e1e;
+      padding: 10px;
+    }
+
+    .deal-image-placeholder {
+      width: 100%;
+      height: 100px;
+      background: #1e1e1e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 40px;
+    }
+
+    .deal-body { padding: 14px; }
+
+    .deal-retailer {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 6px;
+    }
+
+    .retailer-amazon   { color: #FF9900; }
+    .retailer-bestbuy  { color: #FFD700; }
+    .retailer-walmart  { color: #0071CE; }
+    .retailer-nike     { color: #f0f0f0; }
+    .retailer-adidas   { color: #f0f0f0; }
+    .retailer-target   { color: #CC0000; }
+
+    .deal-name {
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.4;
+      color: #f0f0f0;
+      margin-bottom: 12px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .deal-prices {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .deal-price-current {
+      font-size: 26px;
+      font-weight: 900;
+      color: #FF3333;
+    }
+
+    .deal-price-normal {
+      font-size: 15px;
+      color: #555;
+      text-decoration: line-through;
+    }
+
+    .deal-savings {
+      font-size: 12px;
+      color: #33FF66;
+      font-weight: 600;
+    }
+
+    .deal-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 10px;
+      border-top: 1px solid #222;
+    }
+
+    .deal-time { font-size: 11px; color: #555; }
+
+    .buy-btn {
+      padding: 8px 18px;
+      background: #FF3333;
+      color: #fff;
+      border-radius: 6px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+    .buy-btn:hover { background: #FF5555; }
+
+    /* ââ Empty State ââ */
+    .empty {
+      text-align: center;
+      padding: 80px 24px;
+      color: #444;
+    }
+    .empty-icon  { font-size: 56px; margin-bottom: 16px; }
+    .empty h3    { font-size: 18px; color: #666; margin-bottom: 8px; }
+    .empty p     { font-size: 14px; }
+
+    /* ââ Run Log ââ */
+    .run-log {
+      padding: 20px 24px;
+      border-top: 1px solid #1e1e1e;
+    }
+
+    .run-log h3 { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+
+    .run-entry {
+      font-size: 12px;
+      color: #555;
+      padding: 5px 0;
+      border-bottom: 1px solid #191919;
+    }
+    .run-entry span { color: #888; }
+
+    /* ââ Toast ââ */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #1e1e1e;
+      border: 1px solid #FF3333;
+      border-radius: 8px;
+      padding: 12px 18px;
+      font-size: 13px;
+      max-width: 300px;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: all 0.3s;
+      z-index: 999;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    /* ââ Scrollbar ââ */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0d0d0d; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="header-left">
+      <h1>ð¥ Glitch Deal Scraper</h1>
+      <p id="status-text">Loading...</p>
+    </div>
+    <div class="header-right">
+      <div class="status-dot" id="status-dot"></div>
+      <button class="btn btn-primary" onclick="triggerScrape()">â¡ Scrape Now</button>
+    </div>
+  </header>
+
+  <!-- Stats Bar -->
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="stat-label">Total Alerts</div>
+      <div class="stat-value" id="stat-total">â</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Last Run Found</div>
+      <div class="stat-value amber" id="stat-last-batch">â</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Products Tracked</div>
+      <div class="stat-value normal" id="stat-products">â</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Alerts (24h)</div>
+      <div class="stat-value green" id="stat-24h">â</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Next Scan</div>
+      <div class="stat-value normal" id="stat-next" style="font-size:14px">â</div>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="filters">
+    <span class="filter-label">Retailer:</span>
+    <button class="filter-btn active" onclick="setFilter('retailer', null, this)">All</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Amazon', this)">ð¦ Amazon</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Best Buy', this)">ð Best Buy</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Walmart', this)">ð¦ Walmart</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Nike', this)">ð Nike</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Adidas', this)">ð² Adidas</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Target', this)">ð¯ Target</button>
+    &nbsp;
+    <span class="filter-label">Discount:</span>
+    <button class="filter-btn active" onclick="setFilter('minDiscount', 0, this)">All</button>
+    <button class="filter-btn" onclick="setFilter('minDiscount', 70, this)">70%+</button>
+    <button class="filter-btn" onclick="setFilter('minDiscount', 80, this)">80%+</button>
+    <button class="filter-btn" onclick="setFilter('minDiscount', 90, this)">90%+</button>
+    &nbsp;
+    <input
+      class="filter-input"
+      type="text"
+      id="search-input"
+      placeholder="ð Search deals..."
+      oninput="renderDeals()"
+    />
+  </div>
+
+  <!-- Deal Count Header -->
+  <div class="deals-header">
+    <h2>Glitch Deals Found</h2>
+    <span class="deals-count" id="deals-count"></span>
+  </div>
+
+  <!-- Deal Grid -->
+  <div class="deal-grid" id="deal-grid">
+    <div class="empty" style="grid-column:1/-1">
+      <div class="empty-icon">â³</div>
+      <h3>Loading deals...</h3>
+      <p>First scrape runs 15 seconds after startup</p>
+    </div>
+  </div>
+
+  <!-- Run Log -->
+  <div class="run-log" id="run-log" style="display:none">
+    <h3>ð Recent Scan Runs</h3>
+    <div id="run-log-entries"></div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ââ State âââââââââââââââââââââââââââââââââââââââââââââââââ
+    let allAlerts    = [];
+    let filters      = { retailer: null, minDiscount: 0 };
+    let refreshTimer = null;
+
+    // ââ Retailer config âââââââââââââââââââââââââââââââââââââââ
+    const RETAILER_COLORS = {
+      'Amazon':   'retailer-amazon',
+      'Best Buy': 'retailer-bestbuy',
+      'Walmart':  'retailer-walmart',
+      'Nike':     'retailer-nike',
+      'Adidas':   'retailer-adidas',
+      'Target':   'retailer-target',
+    };
+
+    const RETAILER_EMOJI = {
+      'Amazon':   'ð¦',
+      'Best Buy': 'ð',
+      'Walmart':  'ð¦',
+      'Nike':     'ð',
+      'Adidas':   'ð²',
+      'Target':   'ð¯',
+    };
+
+    function fmtPrice(n) {
+      return n != null ? '$' + Number(n).toFixed(2) : null;
+    }
+
+    function timeAgo(iso) {
+      const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+      if (s < 60)   return `${s}s ago`;
+      if (s < 3600) return `${Math.floor(s/60)}m ago`;
+      return `${Math.floor(s/3600)}h ago`;
+    }
+
+    function timeUntil(iso) {
+      if (!iso) return 'â';
+      const s = Math.floor((new Date(iso) - Date.now()) / 1000);
+      if (s <= 0) return 'now';
+      if (s < 60) return `${s}s`;
+      return `${Math.floor(s/60)}m ${s%60}s`;
+    }
+
+    // ââ Filters âââââââââââââââââââââââââââââââââââââââââââââââ
+    function setFilter(key, value, btn) {
+      filters[key] = value;
+      // Update active state in the button group
+      const group = btn.parentElement;
+      group.querySelectorAll('.filter-btn').forEach(b => {
+        if (b.onclick?.toString().includes(`'${key}'`)) b.classList.remove('active');
+      });
+      btn.classList.add('active');
+      renderDeals();
+    }
+
+    function filteredAlerts() {
+      const q = document.getElementById('search-input')?.value?.toLowerCase() || '';
+      return allAlerts.filter(a => {
+        if (filters.retailer   && a.retailer !== filters.retailer) return false;
+        if (filters.minDiscount && a.discount_pct < filters.minDiscount) return false;
+        if (q && !a.name?.toLowerCase().includes(q)) return false;
+        return true;
+      });
+    }
+
+    // ââ Render ââââââââââââââââââââââââââââââââââââââââââââââââ
+    function renderDeals() {
+      const grid    = document.getElementById('deal-grid');
+      const visible = filteredAlerts();
+
+      document.getElementById('deals-count').textContent = `${visible.length} deal${visible.length !== 1 ? 's' : ''}`;
+          
+      if (visible.length === 0) {
+        grid.innerHTML = `
+          <div class="empty" style="grid-column:1/-1">
+            <div class="empty-icon">ð</div>
+            <h3>No deals match your filters</h3>
+            <p>Waiting for the next scan, or try adjusting filters above</p>
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = visible.map(a => {
+        const disc    = Math.round(a.discount_pct);
+        const tier    = disc >= 90 ? 'high' : disc >= 80 ? 'med' : 'low';
+        const emoji   = RETAILER_EMOJI[a.retailer] || 'ð';
+        const color   = RETAILER_COLORS[a.retailer] || '';
+        const savings = a.normal_price && a.glitch_price
+          ? (a.normal_price - a.glitch_price).toFixed(2)
+          : null;
+
+        const imgHtml = a.image_url
+          ? `<img class="deal-image" src="${a.image_url}" alt="" loading="lazy" onerror="this.style.display='none'">`
+          : `<div class="deal-image-placeholder">${emoji}</div>`;
+
+        return `
+          <div class="deal-card ${tier}">
+            <div class="deal-badge">${disc}% OFF</div>
+            ${imgHtml}
+            <div class="deal-body">
+              <div class="deal-retailer ${color}">${emoji} ${a.retailer}</div>
+              <div class="deal-name">${a.name || 'Unknown Product'}</div>
+              <div class="deal-prices">
+                <span class="deal-price-current">${fmtPrice(a.glitch_price)}</span>
+                ${a.normal_price ? `<span class="deal-price-normal">${fmtPrice(a.normal_price)}</span>` : ''}
+              </div>
+              ${savings ? `<div class="deal-savings">You save $${savings}</div>` : ''}
+              <div class="deal-footer">
+                <span class="deal-time">ð ${timeAgo(a.alerted_at)}</span>
+                <a class="buy-btn" href="${a.url}" target="_blank" rel="noopener">BUY NOW â</a>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // ââ Data Fetching ââââââââââââââââââââââââââââââââââââââââââ
+    async function fetchAlerts() {
+      try {
+        const res  = await fetch('/api/alerts');
+        allAlerts  = await res.json();
+        renderDeals();
+      } catch (err) {
+        console.error('Failed to fetch alerts:', err);
+      }
+    }
+
+    async function fetchStats() {
+      try {
+        const stats = await (await fetch('/api/stats')).json();
+
+        document.getElementById('stat-total').textContent    = stats.total_alerts      ?? 'â';
+        document.getElementById('stat-last-batch').textContent = stats.lastBatchNew   ?? 'â';
+        document.getElementById('stat-products').textContent  = stats.total_products  ?? 'â';
+        document.getElementById('stat-24h').textContent     = stats.alerts_24h        ?? 'â';
+        document.getElementById('stat-next').textContent     = timeUntil(stats.nextRun);
+
+        const dot  = document.getElementById('status-dot');
+        const text = document.getElementById('status-text');
+        if (stats.isRunning) {
+          dot.classList.add('running');
+          text.textContent = 'ð Scanning retailers...';
+        } else {
+          dot.classList.remove('running');
+          const last = stats.lastRun ? `Last scan ${timeAgo(stats.lastRun)}` : 'Waiting for first scan...';
+          text.textContent = `${last} Â· Scanning every ${stats.intervalMins}min`;
+        }
+      } catch (err) {
+        console.error('Failed to fetch stats:', err);
+      }
+    }
+
+    async function fetchRunLog() {
+      try {
+        const runs = await (await fetch('/api/runs')).json();
+        if (!runs || runs.length === 0) return;
+
+        const logEl = document.getElementById('run-log');
+        const entries = document.getElementById('run-log-entries');
+        logEl.style.display = 'block';
+
+        entries.innerHTML = runs.slice(0, 10).map(r => {
+          const scrapersSummary = Object.entries(r.scrapers || {})
+            .map(([k, v]) => v.error ? `${k}:â` : `${k}:${v.alerted || 0}`)
+            .join(' Â· ');
+          return `
+            <div class="run-entry">
+              <span>#${r.run}</span> ${new Date(r.startedAt).toLocaleTimeString()} â
+              <span>${r.totalNew} new deal(s)</span>
+              â ${scrapersSummary}
+            </div>
+          `;
+        }).join('');
+      } catch {}
+    }
+
+    // ââ Manual Scrape ââââââââââââââââââââââââââââââââââââââââââ
+    async function triggerScrape() {
+      try {
+        const res  = await fetch('/api/scrape', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.success ? 'â¡ Scan started!' : `â ï¸ ${data.message}`);
+        setTimeout(fetchStats, 2000);
+      } catch (err) {
+        showToast('â Failed to start scan');
+      }
+    }
+
+    // ââ Toast âââââââââââââââââââââââââââââââââââââââââââââââââ
+    function showToast(msg, ms = 3000) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), ms);
+    }
+
+    // ââ Init & Auto-refresh âââââââââââââââââââââââââââââââââââ
+    async function refresh() {
+      await Promise.all([fetchAlerts(), fetchStats()]);
+    }
+
+    // Initial load
+    refresh();
+    fetchRunLog();
+ 
+    // Auto-refresh every 30 seconds
+    setInterval(refresh, 30000);
+
+    // Update "X ago" times every minute
+    setInterval(renderDeals, 60000);
+
+    // Update countdown every second
+    setInterval(fetchStats, 10000);
+  </script>
+</body>
+</html>
