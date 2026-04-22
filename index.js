@@ -1,0 +1,113 @@
+// ============================================================
+//  GLITCH DEAL SCRAPER v2
+//  Monitors: Amazon (Keepa), Best Buy, Walmart, Nike,
+//            Adidas, Target â every 10 minutes, 24/7
+//  Alerts:   Discord webhook (instant) + Email digest
+//  Dashboard: http://localhost:3000
+// ============================================================
+
+require('dotenv').config();
+const express    = require('express');
+const cors       = require('cors');
+const cron       = require('node-cron');
+const path       = require('path');
+
+const db         = require('./lib/db');
+const notifier   = require('./lib/notifier');
+const { closeBrowser } = require('./scrapers/playwright-base');
+
+const scrapers = [
+  { name: 'Amazon',    module: require('./scrapers/amazon'),    enabled: !!process.env.KEEPA_API_KEY },
+  { name: 'Best Buy',  module: require('./scrapers/bestbuy'),   enabled: true },
+  { name: 'Walmart',   module: require('./scrapers/walmart'),   enabled: true },
+  { name: 'Nike',      module: require('./scrapers/nike'),      enabled: true },
+  { name: 'Adidas',    module: require('./scrapers/adidas'),    enabled: true },
+  { name: 'Target',    module: require('./scrapers/target'),    enabled: true },
+];
+
+const MIN_DISCOUNT_PCT      = parseFloat(process.env.MIN_DISCOUNT_PCT   || '70');
+const SCRAPE_INTERVAL_MINS  = parseInt(process.env.SCRAPE_INTERVAL_MINUTES || '10');
+const PORT                  = parseInt(process.env.PORT || '3000');
+
+let isRunning    = false;
+let lastRun      = null;
+let nextRun      = null;
+let runCount     = 0;
+let lastBatchNew = 0;
+const runLog     = [];
+
+async function runScraper() {
+  if (isRunning) { console.log('[Orchestrator] Already running'); return; }
+  isRunning = true;
+  lastRun = new Date().toISOString();
+  runCount++;
+  const runSummary = { run: runCount, startedAt: lastRun, scrapers: {}, totalNew: 0, errors: [] };
+  console.log(`\n============================================\nScrape run #${runCount} - ${new Date().toLocaleString()}\n============================================`);
+  const allNewDeals = [];
+  for (const scraper of scrapers) {
+    if (!scraper.enabled) { console.log(`[${scraper.name}] Skipped`); continue; }
+    console.log(`\n[[scraper.name}] Starting...`);
+    const scraperStart = Date.now();
+    try {
+      const rawDeals = await scraper.module.scrape(MIN_DISCOUNT_PCT);
+      const confirmedDeals = [];
+      for (const deal of rawDeals) {
+        try {
+          const { productDbId, avgPrice, dataPoints } = db.savePrice({ retailer: deal.retailer, productId: deal.productId, name: deal.name, url: deal.url, imageUrl: deal.imageUrl, price: deal.price });
+          if (db.hasRecentAlert(productDbId)) continue;
+          let confirmedDiscount = deal.discountPct;
+          let confirmedNormal = deal.normalPrice;
+          if (avgPrice && dataPoints >= 3) {
+            const historyDiscount = ((avgPrice - deal.price) / avgPrice) * 100;
+            if (historyDiscount >= MIN_DISCOUNT_PCT) { confirmedDiscount = historyDiscount; confirmedNormal = avgPrice; }
+            else if (deal.discountPct < MIN_DISCOUNT_PCT) continue;
+          }
+          if (confirmedDiscount < MIN_DISCOUNT_PCT) continue;
+          db.recordAlert({ productDbId, glitchPrice: deal.price, normalPrice: confirmedNormal || deal.normalPrice, discountPct: confirmedDiscount, retailer: deal.retailer });
+          confirmedDeals.push({ ...deal, discountPct: confirmedDiscount, normalPrice: confirmedNormal || deal.normalPrice, dataPoints });
+        } catch (err) { console.error(`[${scraper.name}] Error:`, err.message); }
+      }
+      runSummary.scrapers[scraper.name] = { found: rawDeals.length, alerted: confirmedDeals.length, ms: Date.now() - scraperStart };
+      allNewDeals.push(...confirmedDeals);
+      console.log(`[${scraper.name}] ${rawDeals.length} raw -> ${confirmedDeals.length} confirmed`);
+    } catch (err) {
+      console.error(`[${scraper.name}] Error:`, err.message);
+      runSummary.scrapers[scraper.name] = { error: err.message };
+      runSummary.errors.push(`${scraper.name}: ${err.message}`);
+    }
+  }
+  if (allNewDeals.length > 0) {
+    for (const deal of allNewDeals) { await notifier.sendDiscordAlert(deal); await new Promise(r=>setTimeout(r,400)); }
+    await notifier.sendEmailDigest(allNewDeals);
+  }
+  runSummary.totalNew = allNewDeals.length;
+  runSummary.endedAt = new Date().toISOString();
+  lastBatchNew = allNewDeals.length;
+  runLog.unshift(runSummary);
+  if (runLog.length > 20) runLog.pop();
+  if (runCount % 144 === 0) db.pruneOldData();
+  isRunning = false;
+  console.log(`Run #${runCount} complete - ${allNewDeals.length} new glitch deal(s)`);
+}
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/api/alerts', (req, res) => { try { res.json(db.getRecentAlerts()); } catch (err) { res.status(500).json({ error: err.message }); } });
+app.get('/api/stats', (req, res) => { const dbStats = db.getStats(); res.json({ ...dbStats, isRunning, lastRun, nextRun, runCount, lastBatchNew, minDiscount: MIN_DISCOUNT_PCT, intervalMins: SCRAPE_INTERVAL_MINS, enabledScrapers: scrapers.filter(s => s.enabled).map(s => s.name), discordLinked: !!process.env.DISCORD_WEBHOOK_URL, emailLinked: !!process.env.EMAIL_USER, keepaLinked: !!process.env.KEEPA_API_KEY }); });
+app.get('/api/runs', (req, res) => res.json(runLog));
+app.post('/api/scrape', (req, res) => { if (isRunning) return res.json({ success: false, message: 'Already running' }); runScraper().catch(console.error); res.json({ success: true, message: 'Scrape started' }); });
+app.get('/health', (req, res) => res.json({ status: 'ok', uptime: Math.round(process.uptime()) }));
+
+const cronExpr = `*/${SCRAPE_INTERVAL_MINS} * * * *`;
+cron.schedule(cronExpr, () => { nextRun = null; runScraper().catch(console.error).finally(() => { nextRun = new Date(Date.now() + SCRAPE_INTERVAL_MINS * 60 * 1000).toISOString(); }); });
+
+app.listen(PORT, () => {
+  console.log(`\nGLTCH DEVL SCAPECR v2 - ONLINE\nDashboard: http://localhost:${PORT}\nInterval: every ${SCRAPE_INTERVAL_MINS} minutes\nDiscord: ${process.env.DISCORD_WEBHOOK_URL ? 'connected' : 'NOT SET'}`);
+  setTimeout(() => { nextRun = null; runScraper().catch(console.error).finally(() => { nextRun = new Date(Date.now() + SCRAPE_INTERVAL_MINS * 60 * 1000).toISOString(); }); }, 15000);
+});
+
+process.on('SIGTERM', async () => { await closeBrowser(); process.exit(0); });
+process.on('SIGINT', async () => { await closeBrowser(); process.exit(0); });
