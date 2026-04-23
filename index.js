@@ -2,7 +2,7 @@
 //  GLITCH DEAL SCRAPER v3
 //  Monitors: Amazon (Keepa), Best Buy, Walmart, Target, Nike,
 //            Adidas, Farfetch, SSENSE, Woot, Dell, Newegg,
-//            6pm, Nordstrom Rack, B&H Photo — every 10 minutes
+//            6pm, Nordstrom Rack, B&H Photo, OfferUp — every 10 min
 //  Categories: Electronics, Laptops, TVs, Sneakers, Designer
 //  Alerts:   Discord webhook (instant) + Email digest
 //  Dashboard: http://localhost:3000
@@ -38,6 +38,8 @@ const scrapers = [
   { name: '6pm',            module: require('./scrapers/sixpm'),          enabled: true },
   { name: 'Nordstrom Rack', module: require('./scrapers/nordstromrack'),  enabled: true },
   { name: 'B&H Photo',      module: require('./scrapers/bhphoto'),        enabled: true },
+  // Marketplace (new items only)
+  { name: 'OfferUp',        module: require('./scrapers/offerup'),        enabled: true },
 ];
 
 // ── Config ────────────────────────────────────────────────────
