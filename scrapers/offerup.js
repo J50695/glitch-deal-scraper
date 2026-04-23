@@ -1,71 +1,83 @@
 // ============================================================
-//  scrapers/offerup.js — OfferUp NEW Items Price Detector
+//  scrapers/offerup.js — OfferUp Arbitrage Finder
 //
-//  OfferUp is a local marketplace where sellers often misprice
-//  brand-new items way below retail. We search key categories
-//  filtered to NEW condition only, sorted by lowest price, and
-//  flag anything that's suspiciously cheap vs. known market value.
+//  Strategy: people on OfferUp underprice NEW items they don't
+//  want. We buy them cheap and flip on eBay / StockX / Amazon
+//  where the same item sells at full market value.
 //
-//  condition=1 → New
+//  flipPrice = what you can realistically sell it for
+//  refPrice  = same (what the market pays on eBay/StockX)
+//  Alert fires when OfferUp price leaves enough profit margin.
+//
+//  condition=1 → New only
 //  sort=1      → Lowest price first
 // ============================================================
 
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
 
-// Search terms + their typical retail reference prices for glitch detection.
-// If an item is found below (refPrice * threshold), it gets flagged.
-const OFFERUP_SEARCHES = [
-  // Electronics
-  { q: 'iphone 15',          refPrice: 799,   label: 'OfferUp — iPhone 15 (New)'         },
-  { q: 'iphone 16',          refPrice: 899,   label: 'OfferUp — iPhone 16 (New)'         },
-  { q: 'macbook',            refPrice: 999,   label: 'OfferUp — MacBook (New)'           },
-  { q: 'laptop',             refPrice: 600,   label: 'OfferUp — Laptop (New)'            },
-  { q: 'playstation 5',      refPrice: 499,   label: 'OfferUp — PS5 (New)'              },
-  { q: 'xbox series x',      refPrice: 499,   label: 'OfferUp — Xbox Series X (New)'    },
-  { q: 'nintendo switch',    refPrice: 299,   label: 'OfferUp — Nintendo Switch (New)'  },
-  { q: 'ipad',               refPrice: 449,   label: 'OfferUp — iPad (New)'             },
-  { q: 'airpods pro',        refPrice: 249,   label: 'OfferUp — AirPods Pro (New)'      },
-  { q: 'samsung tv',         refPrice: 500,   label: 'OfferUp — Samsung TV (New)'       },
-  // Sneakers
-  { q: 'jordan 1',           refPrice: 180,   label: 'OfferUp — Jordan 1 (New)'         },
-  { q: 'yeezy',              refPrice: 220,   label: 'OfferUp — Yeezy (New)'            },
-  { q: 'travis scott nike',  refPrice: 300,   label: 'OfferUp — Travis Scott (New)'     },
-  { q: 'new balance 990',    refPrice: 185,   label: 'OfferUp — New Balance 990 (New)'  },
-  { q: 'nike dunks',         refPrice: 110,   label: 'OfferUp — Nike Dunks (New)'       },
-  // Designer
-  { q: 'louis vuitton',      refPrice: 800,   label: 'OfferUp — LV (New)'               },
-  { q: 'gucci',              refPrice: 600,   label: 'OfferUp — Gucci (New)'            },
-  { q: 'supreme box logo',   refPrice: 200,   label: 'OfferUp — Supreme (New)'          },
+// Each entry has:
+//   q         — search term
+//   flipPrice — what this sells for on eBay/StockX/Amazon right now
+//   flipWhere — where to resell it
+//   label     — display name
+const OFFERUP_FLIPS = [
+  // ── Sneakers (StockX resale prices) ────────────────────────
+  { q: 'jordan 1 retro high',    flipPrice: 250,  flipWhere: 'StockX/eBay',  label: 'Jordan 1 High (New)'           },
+  { q: 'jordan 4',               flipPrice: 280,  flipWhere: 'StockX/eBay',  label: 'Jordan 4 (New)'                },
+  { q: 'yeezy 350',              flipPrice: 260,  flipWhere: 'StockX/eBay',  label: 'Yeezy 350 (New)'               },
+  { q: 'yeezy 700',              flipPrice: 200,  flipWhere: 'StockX/eBay',  label: 'Yeezy 700 (New)'               },
+  { q: 'new balance 550',        flipPrice: 130,  flipWhere: 'StockX/eBay',  label: 'New Balance 550 (New)'         },
+  { q: 'new balance 990',        flipPrice: 185,  flipWhere: 'StockX/eBay',  label: 'New Balance 990 (New)'         },
+  { q: 'nike dunk low',          flipPrice: 120,  flipWhere: 'StockX/eBay',  label: 'Nike Dunk Low (New)'           },
+  { q: 'travis scott nike',      flipPrice: 400,  flipWhere: 'StockX/eBay',  label: 'Travis Scott (New)'            },
+  { q: 'off white nike',         flipPrice: 350,  flipWhere: 'StockX/eBay',  label: 'Off-White Nike (New)'          },
+  { q: 'sacai nike',             flipPrice: 280,  flipWhere: 'StockX/eBay',  label: 'Sacai Nike (New)'              },
+  // ── Electronics (eBay sold listings) ───────────────────────
+  { q: 'iphone 15 pro',          flipPrice: 750,  flipWhere: 'eBay/Swappa',  label: 'iPhone 15 Pro (New)'           },
+  { q: 'iphone 16',              flipPrice: 700,  flipWhere: 'eBay/Swappa',  label: 'iPhone 16 (New)'               },
+  { q: 'macbook air m2',         flipPrice: 900,  flipWhere: 'eBay',         label: 'MacBook Air M2 (New)'          },
+  { q: 'macbook air m3',         flipPrice: 1000, flipWhere: 'eBay',         label: 'MacBook Air M3 (New)'          },
+  { q: 'samsung galaxy s24',     flipPrice: 600,  flipWhere: 'eBay/Swappa',  label: 'Galaxy S24 (New)'              },
+  { q: 'apple watch ultra',      flipPrice: 650,  flipWhere: 'eBay',         label: 'Apple Watch Ultra (New)'       },
+  { q: 'airpods pro 2',          flipPrice: 180,  flipWhere: 'eBay',         label: 'AirPods Pro 2 (New)'           },
+  { q: 'ipad pro',               flipPrice: 800,  flipWhere: 'eBay',         label: 'iPad Pro (New)'                },
+  // ── Gaming (eBay) ───────────────────────────────────────────
+  { q: 'playstation 5',          flipPrice: 430,  flipWhere: 'eBay',         label: 'PS5 (New)'                     },
+  { q: 'xbox series x',          flipPrice: 400,  flipWhere: 'eBay',         label: 'Xbox Series X (New)'           },
+  { q: 'steam deck oled',        flipPrice: 500,  flipWhere: 'eBay',         label: 'Steam Deck OLED (New)'         },
+  { q: 'nintendo switch oled',   flipPrice: 280,  flipWhere: 'eBay',         label: 'Switch OLED (New)'             },
+  // ── Streetwear / Designer (StockX/Grailed) ─────────────────
+  { q: 'supreme box logo hoodie',flipPrice: 500,  flipWhere: 'StockX/Grailed', label: 'Supreme Box Logo (New)'      },
+  { q: 'bape hoodie',            flipPrice: 280,  flipWhere: 'StockX/Grailed', label: 'Bape Hoodie (New)'           },
+  { q: 'chrome hearts',          flipPrice: 400,  flipWhere: 'Grailed',       label: 'Chrome Hearts (New)'          },
+  { q: 'stone island jacket',    flipPrice: 350,  flipWhere: 'Grailed/eBay',  label: 'Stone Island (New)'           },
 ];
 
-// Build the OfferUp search URL — condition=1 is "New", sort=1 is price low→high
 function buildUrl(query) {
   return 'https://offerup.com/search/?q=' + encodeURIComponent(query) + '&condition=1&sort=1';
 }
 
 async function scrape(minDiscountPct) {
   if (minDiscountPct === undefined) minDiscountPct = 70;
-  console.log('[OfferUp] Starting NEW items scrape...');
+  console.log('[OfferUp] Starting arbitrage scan — NEW items only...');
   var deals = [];
 
-  for (var i = 0; i < OFFERUP_SEARCHES.length; i++) {
-    var search = OFFERUP_SEARCHES[i];
+  for (var i = 0; i < OFFERUP_FLIPS.length; i++) {
+    var item = OFFERUP_FLIPS[i];
     var page = null;
     try {
       page = await newPage();
-      var url = buildUrl(search.q);
+      var url = buildUrl(item.q);
       await goto(page, url);
 
-      // Wait for listings
       await page.waitForSelector('[data-testid="listing-card"], [class*="ListingCard"], [class*="listingCard"]', {
         timeout: 20000,
       }).catch(function() {});
       await sleep(3000);
 
-      // Dismiss location/cookie modals
+      // Dismiss modals
       await page.evaluate(function() {
-        var btns = document.querySelectorAll('button');
-        btns.forEach(function(b) {
+        document.querySelectorAll('button').forEach(function(b) {
           var t = b.textContent.toLowerCase();
           if (t.includes('not now') || t.includes('dismiss') || t.includes('close') || t.includes('skip')) b.click();
         });
@@ -75,75 +87,78 @@ async function scrape(minDiscountPct) {
       var listings = await page.$$eval(
         '[data-testid="listing-card"], [class*="ListingCard"], [class*="listingCard"], [class*="item-card"]',
         function(cards) {
-          return cards.slice(0, 30).map(function(card) {
+          return cards.slice(0, 24).map(function(card) {
             var titleEl = card.querySelector('[data-testid="listing-title"], [class*="title"], [class*="Title"], p, h3');
             var title = titleEl ? titleEl.textContent.trim() : null;
 
             var priceEl = card.querySelector('[data-testid="listing-price"], [class*="price"], [class*="Price"]');
             var priceStr = priceEl ? priceEl.textContent.trim() : null;
 
-            var linkEl = card.querySelector('a[href*="/item/"], a[href*="offerup.com"], a');
+            var linkEl = card.querySelector('a[href*="/item/"], a');
             var href = linkEl ? linkEl.href : null;
 
-            var imgEl = card.querySelector('img[src*="offerup"], img[src*="cdn"], img');
+            var imgEl = card.querySelector('img');
             var imgSrc = imgEl ? (imgEl.src || imgEl.dataset.src) : null;
 
-            // Condition badge - should say "New"
-            var condEl = card.querySelector('[data-testid="listing-condition"], [class*="condition"], [class*="Condition"]');
-            var condition = condEl ? condEl.textContent.trim() : '';
+            var condEl = card.querySelector('[class*="condition"], [class*="Condition"]');
+            var condition = condEl ? condEl.textContent.trim().toLowerCase() : '';
 
             return { title: title, priceStr: priceStr, href: href, imgSrc: imgSrc, condition: condition };
           });
         }
       );
 
-      console.log('[OfferUp] ' + search.label + ': ' + listings.length + ' listings');
+      console.log('[OfferUp] ' + item.label + ': ' + listings.length + ' listings');
 
       for (var j = 0; j < listings.length; j++) {
-        var item = listings[j];
-        if (!item.title || !item.priceStr) continue;
+        var listing = listings[j];
+        if (!listing.title || !listing.priceStr) continue;
 
-        // Skip if condition is explicitly NOT new
-        var cond = (item.condition || '').toLowerCase();
-        if (cond && cond !== 'new' && cond !== '') continue;
+        // Skip explicitly non-new items
+        var cond = listing.condition || '';
+        if (cond && cond !== 'new') continue;
 
-        var price = parsePrice(item.priceStr);
-        if (!price || price <= 0 || price < 5) continue;
+        var askPrice = parsePrice(listing.priceStr);
+        if (!askPrice || askPrice <= 0 || askPrice < 10) continue;
 
-        var refPrice = search.refPrice;
+        // Skip if asking more than flip price (no profit)
+        if (askPrice >= item.flipPrice) continue;
 
-        // Skip if price is above reference (not a deal)
-        if (price >= refPrice) continue;
+        var profit = item.flipPrice - askPrice;
+        var discountPct = (profit / item.flipPrice) * 100;
 
-        var discountPct = ((refPrice - price) / refPrice) * 100;
+        // Minimum $30 profit AND meets % threshold
+        if (discountPct < minDiscountPct || profit < 30) continue;
 
-        if (discountPct >= minDiscountPct) {
-          var url2 = item.href ? (item.href.startsWith('http') ? item.href : 'https://offerup.com' + item.href) : url;
-          console.log('[OfferUp] DEAL: ' + item.title + ' — $' + price + ' (vs ~$' + refPrice + ' retail, ' + Math.round(discountPct) + '% off)');
-          deals.push({
-            productId:   'offerup_' + Buffer.from(url2).toString('base64').slice(0, 20),
-            retailer:    'OfferUp',
-            name:        item.title,
-            url:         url2,
-            imageUrl:    item.imgSrc || null,
-            price:       price,
-            normalPrice: refPrice,
-            discountPct: discountPct,
-            source:      search.label,
-          });
-        }
+        var listingUrl = listing.href
+          ? (listing.href.startsWith('http') ? listing.href : 'https://offerup.com' + listing.href)
+          : url;
+
+        console.log('[OfferUp] FLIP: ' + listing.title + ' — Buy $' + askPrice + ' → Sell ~$' + item.flipPrice + ' on ' + item.flipWhere + ' (+$' + Math.round(profit) + ')');
+
+        deals.push({
+          productId:   'offerup_' + Buffer.from(listingUrl).toString('base64').slice(0, 20),
+          retailer:    'OfferUp',
+          name:        listing.title + ' [Flip → ' + item.flipWhere + ']',
+          url:         listingUrl,
+          imageUrl:    listing.imgSrc || null,
+          price:       askPrice,
+          normalPrice: item.flipPrice,
+          discountPct: discountPct,
+          source:      item.label + ' (+$' + Math.round(profit) + ' profit)',
+        });
       }
 
     } catch (err) {
-      console.error('[OfferUp] Error on ' + search.label + ': ' + err.message);
+      console.error('[OfferUp] Error on ' + item.label + ': ' + err.message);
     } finally {
       if (page) await page.context().close().catch(function() {});
     }
 
-    await sleep(3000);
+    await sleep(2500);
   }
 
-  console.log('[OfferUp] Done. ' + deals.length + ' glitch deal(s) found.');
+  console.log('[OfferUp] Done. ' + deals.length + ' flip opportunity(s) found.');
   return deals;
 }
 
