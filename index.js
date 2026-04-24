@@ -47,7 +47,7 @@ const scrapers = [
 ];
 
 // ── Config ────────────────────────────────────────────────────
-const MIN_DISCOUNT_PCT      = parseFloat(process.env.MIN_DISCOUNT_PCT   || '70');
+const MIN_DISCOUNT_PCT      = parseFloat(process.env.MIN_DISCOUNT_PCT || '40');
 const SCRAPE_INTERVAL_MINS  = parseInt(process.env.SCRAPE_INTERVAL_MINUTES || '10');
 const PORT                  = parseInt(process.env.PORT || '3000');
 
