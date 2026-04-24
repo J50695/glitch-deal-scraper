@@ -35,6 +35,10 @@ const scrapers = [
   { name: 'Woot',           module: require('./scrapers/woot'),           enabled: true },
   { name: 'Dell',           module: require('./scrapers/dell'),           enabled: true },
   // Marketplace (new items only)
+  { name: 'Newegg',         module: require('./scrapers/newegg'),         enabled: true },
+  { name: '6pm',            module: require('./scrapers/sixpm'),          enabled: true },
+  { name: 'Nordstrom Rack', module: require('./scrapers/nordstromrack'),  enabled: true },
+  { name: 'B&H Photo',      module: require('./scrapers/bhphoto'),        enabled: true },
   { name: 'OfferUp',        module: require('./scrapers/offerup'),        enabled: true },
 ];
 
