@@ -19,27 +19,31 @@ const notifier   = require('./lib/notifier');
 const { closeBrowser } = require('./scrapers/playwright-base');
 
 // ── Scrapers ──────────────────────────────────────────────────
+function safeRequire(p) {
+  try { return require(p); } catch(e) { console.error('[LOAD ERROR]', p, e.message); return { scrape: async function() { return []; } }; }
+}
+
 const scrapers = [
   // Core retail
-  { name: 'Amazon',         module: require('./scrapers/amazon'),         enabled: !!process.env.KEEPA_API_KEY },
-  { name: 'Best Buy',       module: require('./scrapers/bestbuy'),        enabled: true },
-  { name: 'Walmart',        module: require('./scrapers/walmart'),        enabled: true },
-  { name: 'Target',         module: require('./scrapers/target'),         enabled: true },
+  { name: 'Amazon',         module: safeRequire('./scrapers/amazon'),         enabled: !!process.env.KEEPA_API_KEY },
+  { name: 'Best Buy',       module: safeRequire('./scrapers/bestbuy'),        enabled: true },
+  { name: 'Walmart',        module: safeRequire('./scrapers/walmart'),        enabled: true },
+  { name: 'Target',         module: safeRequire('./scrapers/target'),         enabled: true },
   // Sneakers & Apparel
-  { name: 'Nike',           module: require('./scrapers/nike'),           enabled: true },
-  { name: 'Adidas',         module: require('./scrapers/adidas'),         enabled: true },
+  { name: 'Nike',           module: safeRequire('./scrapers/nike'),           enabled: true },
+  { name: 'Adidas',         module: safeRequire('./scrapers/adidas'),         enabled: true },
   // Designer / Luxury
-  { name: 'Farfetch',       module: require('./scrapers/farfetch'),       enabled: true },
-  { name: 'SSENSE',         module: require('./scrapers/ssense'),         enabled: true },
+  { name: 'Farfetch',       module: safeRequire('./scrapers/farfetch'),       enabled: true },
+  { name: 'SSENSE',         module: safeRequire('./scrapers/ssense'),         enabled: true },
   // Clearance / Outlet / Daily Deals
-  { name: 'Woot',           module: require('./scrapers/woot'),           enabled: true },
-  { name: 'Dell',           module: require('./scrapers/dell'),           enabled: true },
+  { name: 'Woot',           module: safeRequire('./scrapers/woot'),           enabled: true },
+  { name: 'Dell',           module: safeRequire('./scrapers/dell'),           enabled: true },
   // Marketplace (new items only)
-  { name: 'Newegg',         module: require('./scrapers/newegg'),         enabled: true },
-  { name: '6pm',            module: require('./scrapers/sixpm'),          enabled: true },
-  { name: 'Nordstrom Rack', module: require('./scrapers/nordstromrack'),  enabled: true },
-  { name: 'B&H Photo',      module: require('./scrapers/bhphoto'),        enabled: true },
-  { name: 'OfferUp',        module: require('./scrapers/offerup'),        enabled: true },
+  { name: 'Newegg',         module: safeRequire('./scrapers/newegg'),         enabled: true },
+  { name: '6pm',            module: safeRequire('./scrapers/sixpm'),          enabled: true },
+  { name: 'Nordstrom Rack', module: safeRequire('./scrapers/nordstromrack'),  enabled: true },
+  { name: 'B&H Photo',      module: safeRequire('./scrapers/bhphoto'),        enabled: true },
+  { name: 'OfferUp',        module: safeRequire('./scrapers/offerup'),        enabled: true },
 ];
 
 // ── Config ────────────────────────────────────────────────────
