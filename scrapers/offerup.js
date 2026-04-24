@@ -1,164 +1,95 @@
-// ============================================================
-//  scrapers/offerup.js — OfferUp Arbitrage Finder
-//
-//  Strategy: people on OfferUp underprice NEW items they don't
-//  want. We buy them cheap and flip on eBay / StockX / Amazon
-//  where the same item sells at full market value.
-//
-//  flipPrice = what you can realistically sell it for
-//  refPrice  = same (what the market pays on eBay/StockX)
-//  Alert fires when OfferUp price leaves enough profit margin.
-//
-//  condition=1 → New only
-//  sort=1      → Lowest price first
-// ============================================================
+var playwright = require('playwright');
 
-const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+var MIN_PROFIT = 30;
 
-// Each entry has:
-//   q         — search term
-//   flipPrice — what this sells for on eBay/StockX/Amazon right now
-//   flipWhere — where to resell it
-//   label     — display name
-const OFFERUP_FLIPS = [
-  // ── Sneakers (StockX resale prices) ────────────────────────
-  { q: 'jordan 1 retro high',    flipPrice: 250,  flipWhere: 'StockX/eBay',  label: 'Jordan 1 High (New)'           },
-  { q: 'jordan 4',               flipPrice: 280,  flipWhere: 'StockX/eBay',  label: 'Jordan 4 (New)'                },
-  { q: 'yeezy 350',              flipPrice: 260,  flipWhere: 'StockX/eBay',  label: 'Yeezy 350 (New)'               },
-  { q: 'yeezy 700',              flipPrice: 200,  flipWhere: 'StockX/eBay',  label: 'Yeezy 700 (New)'               },
-  { q: 'new balance 550',        flipPrice: 130,  flipWhere: 'StockX/eBay',  label: 'New Balance 550 (New)'         },
-  { q: 'new balance 990',        flipPrice: 185,  flipWhere: 'StockX/eBay',  label: 'New Balance 990 (New)'         },
-  { q: 'nike dunk low',          flipPrice: 120,  flipWhere: 'StockX/eBay',  label: 'Nike Dunk Low (New)'           },
-  { q: 'travis scott nike',      flipPrice: 400,  flipWhere: 'StockX/eBay',  label: 'Travis Scott (New)'            },
-  { q: 'off white nike',         flipPrice: 350,  flipWhere: 'StockX/eBay',  label: 'Off-White Nike (New)'          },
-  { q: 'sacai nike',             flipPrice: 280,  flipWhere: 'StockX/eBay',  label: 'Sacai Nike (New)'              },
-  // ── Electronics (eBay sold listings) ───────────────────────
-  { q: 'iphone 15 pro',          flipPrice: 750,  flipWhere: 'eBay/Swappa',  label: 'iPhone 15 Pro (New)'           },
-  { q: 'iphone 16',              flipPrice: 700,  flipWhere: 'eBay/Swappa',  label: 'iPhone 16 (New)'               },
-  { q: 'macbook air m2',         flipPrice: 900,  flipWhere: 'eBay',         label: 'MacBook Air M2 (New)'          },
-  { q: 'macbook air m3',         flipPrice: 1000, flipWhere: 'eBay',         label: 'MacBook Air M3 (New)'          },
-  { q: 'samsung galaxy s24',     flipPrice: 600,  flipWhere: 'eBay/Swappa',  label: 'Galaxy S24 (New)'              },
-  { q: 'apple watch ultra',      flipPrice: 650,  flipWhere: 'eBay',         label: 'Apple Watch Ultra (New)'       },
-  { q: 'airpods pro 2',          flipPrice: 180,  flipWhere: 'eBay',         label: 'AirPods Pro 2 (New)'           },
-  { q: 'ipad pro',               flipPrice: 800,  flipWhere: 'eBay',         label: 'iPad Pro (New)'                },
-  // ── Gaming (eBay) ───────────────────────────────────────────
-  { q: 'playstation 5',          flipPrice: 430,  flipWhere: 'eBay',         label: 'PS5 (New)'                     },
-  { q: 'xbox series x',          flipPrice: 400,  flipWhere: 'eBay',         label: 'Xbox Series X (New)'           },
-  { q: 'steam deck oled',        flipPrice: 500,  flipWhere: 'eBay',         label: 'Steam Deck OLED (New)'         },
-  { q: 'nintendo switch oled',   flipPrice: 280,  flipWhere: 'eBay',         label: 'Switch OLED (New)'             },
-  // ── Streetwear / Designer (StockX/Grailed) ─────────────────
-  { q: 'supreme box logo hoodie',flipPrice: 500,  flipWhere: 'StockX/Grailed', label: 'Supreme Box Logo (New)'      },
-  { q: 'bape hoodie',            flipPrice: 280,  flipWhere: 'StockX/Grailed', label: 'Bape Hoodie (New)'           },
-  { q: 'chrome hearts',          flipPrice: 400,  flipWhere: 'Grailed',       label: 'Chrome Hearts (New)'          },
-  { q: 'stone island jacket',    flipPrice: 350,  flipWhere: 'Grailed/eBay',  label: 'Stone Island (New)'           },
+var TERMS = [
+  { q: 'Jordan 1 High', flip: 280, where: 'StockX', label: 'Jordan 1 High' },
+  { q: 'Jordan 4 Retro', flip: 250, where: 'StockX', label: 'Jordan 4 Retro' },
+  { q: 'Yeezy 350 V2', flip: 220, where: 'StockX', label: 'Yeezy 350 V2' },
+  { q: 'Yeezy 700', flip: 180, where: 'StockX', label: 'Yeezy 700' },
+  { q: 'New Balance 550', flip: 130, where: 'StockX', label: 'New Balance 550' },
+  { q: 'New Balance 990v5', flip: 185, where: 'StockX', label: 'New Balance 990' },
+  { q: 'Nike Dunk Low', flip: 120, where: 'StockX', label: 'Nike Dunk Low' },
+  { q: 'Travis Scott Jordan', flip: 450, where: 'StockX', label: 'Travis Scott Jordan' },
+  { q: 'Off White Nike', flip: 500, where: 'StockX', label: 'Off White Nike' },
+  { q: 'Nike Sacai', flip: 300, where: 'StockX', label: 'Nike Sacai' },
+  { q: 'iPhone 15 Pro', flip: 750, where: 'eBay', label: 'iPhone 15 Pro' },
+  { q: 'iPhone 16', flip: 700, where: 'eBay', label: 'iPhone 16' },
+  { q: 'MacBook Air M2', flip: 900, where: 'eBay', label: 'MacBook Air M2' },
+  { q: 'MacBook Air M3', flip: 1000, where: 'eBay', label: 'MacBook Air M3' },
+  { q: 'Samsung Galaxy S24', flip: 600, where: 'eBay', label: 'Galaxy S24' },
+  { q: 'Apple Watch Ultra', flip: 650, where: 'eBay', label: 'Apple Watch Ultra' },
+  { q: 'AirPods Pro 2', flip: 180, where: 'eBay', label: 'AirPods Pro 2' },
+  { q: 'iPad Pro 2024', flip: 700, where: 'eBay', label: 'iPad Pro' },
+  { q: 'PS5 console', flip: 380, where: 'eBay', label: 'PS5' },
+  { q: 'Xbox Series X', flip: 350, where: 'eBay', label: 'Xbox Series X' },
+  { q: 'Steam Deck OLED', flip: 500, where: 'eBay', label: 'Steam Deck OLED' },
+  { q: 'Nintendo Switch OLED', flip: 250, where: 'eBay', label: 'Switch OLED' },
+  { q: 'Supreme Box Logo hoodie', flip: 600, where: 'eBay', label: 'Supreme Box Logo' },
+  { q: 'Bape hoodie', flip: 300, where: 'eBay', label: 'Bape Hoodie' },
+  { q: 'Chrome Hearts ring', flip: 400, where: 'eBay', label: 'Chrome Hearts' },
+  { q: 'Stone Island jacket', flip: 350, where: 'eBay', label: 'Stone Island' }
 ];
 
-function buildUrl(query) {
-  return 'https://offerup.com/search/?q=' + encodeURIComponent(query) + '&condition=1&sort=1';
+async function scrapeTerm(page, term) {
+  var deals = [];
+  try {
+    var url = 'https://offerup.com/search/?q=' + encodeURIComponent(term.q) + '&condition=1&sort=1';
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await page.waitForTimeout(2500);
+    var items = await page.evaluate(function() {
+      var results = [];
+      var cards = document.querySelectorAll('li[data-testid]');
+      if (!cards.length) { cards = document.querySelectorAll('[class*="listing"]'); }
+      cards.forEach(function(card) {
+        var priceEl = card.querySelector('[class*="price"]');
+        var linkEl = card.querySelector('a');
+        if (!priceEl || !linkEl) return;
+        var priceText = priceEl.innerText.replace(/[^0-9.]/g, '');
+        var price = parseFloat(priceText);
+        if (!price) return;
+        results.push({ price: price, url: linkEl.href || '' });
+      });
+      return results;
+    });
+    for (var j = 0; j < items.length; j++) {
+      var item = items[j];
+      if (!item.price || item.price <= 0) continue;
+      var profit = term.flip - item.price;
+      var pct = Math.round((profit / term.flip) * 100);
+      if (profit >= MIN_PROFIT) {
+        deals.push({
+          name: term.label + ' [Flip to ' + term.where + ']',
+          price: item.price,
+          originalPrice: term.flip,
+          discount: pct,
+          url: item.url || 'https://offerup.com/search/?q=' + encodeURIComponent(term.q),
+          source: term.label + ' (New) (+$' + Math.round(profit) + ' profit)',
+          storeName: 'OfferUp'
+        });
+      }
+    }
+  } catch (e) {}
+  return deals;
 }
 
 async function scrape(minDiscountPct) {
-  if (minDiscountPct === undefined) minDiscountPct = 70;
-  console.log('[OfferUp] Starting arbitrage scan — NEW items only...');
   var deals = [];
-
-  for (var i = 0; i < OFFERUP_FLIPS.length; i++) {
-    var item = OFFERUP_FLIPS[i];
-    var page = null;
-    try {
-      page = await newPage();
-      var url = buildUrl(item.q);
-      await goto(page, url);
-
-      await page.waitForSelector('[data-testid="listing-card"], [class*="ListingCard"], [class*="listingCard"]', {
-        timeout: 20000,
-      }).catch(function() {});
-      await sleep(3000);
-
-      // Dismiss modals
-      await page.evaluate(function() {
-        document.querySelectorAll('button').forEach(function(b) {
-          var t = b.textContent.toLowerCase();
-          if (t.includes('not now') || t.includes('dismiss') || t.includes('close') || t.includes('skip')) b.click();
-        });
-      }).catch(function() {});
-      await sleep(800);
-
-      var listings = await page.$$eval(
-        '[data-testid="listing-card"], [class*="ListingCard"], [class*="listingCard"], [class*="item-card"]',
-        function(cards) {
-          return cards.slice(0, 24).map(function(card) {
-            var titleEl = card.querySelector('[data-testid="listing-title"], [class*="title"], [class*="Title"], p, h3');
-            var title = titleEl ? titleEl.textContent.trim() : null;
-
-            var priceEl = card.querySelector('[data-testid="listing-price"], [class*="price"], [class*="Price"]');
-            var priceStr = priceEl ? priceEl.textContent.trim() : null;
-
-            var linkEl = card.querySelector('a[href*="/item/"], a');
-            var href = linkEl ? linkEl.href : null;
-
-            var imgEl = card.querySelector('img');
-            var imgSrc = imgEl ? (imgEl.src || imgEl.dataset.src) : null;
-
-            var condEl = card.querySelector('[class*="condition"], [class*="Condition"]');
-            var condition = condEl ? condEl.textContent.trim().toLowerCase() : '';
-
-            return { title: title, priceStr: priceStr, href: href, imgSrc: imgSrc, condition: condition };
-          });
-        }
-      );
-
-      console.log('[OfferUp] ' + item.label + ': ' + listings.length + ' listings');
-
-      for (var j = 0; j < listings.length; j++) {
-        var listing = listings[j];
-        if (!listing.title || !listing.priceStr) continue;
-
-        // Skip explicitly non-new items
-        var cond = listing.condition || '';
-        if (cond && cond !== 'new') continue;
-
-        var askPrice = parsePrice(listing.priceStr);
-        if (!askPrice || askPrice <= 0 || askPrice < 10) continue;
-
-        // Skip if asking more than flip price (no profit)
-        if (askPrice >= item.flipPrice) continue;
-
-        var profit = item.flipPrice - askPrice;
-        var discountPct = (profit / item.flipPrice) * 100;
-
-        // Minimum $30 profit AND meets % threshold
-        if (discountPct < minDiscountPct || profit < 30) continue;
-
-        var listingUrl = listing.href
-          ? (listing.href.startsWith('http') ? listing.href : 'https://offerup.com' + listing.href)
-          : url;
-
-        console.log('[OfferUp] FLIP: ' + listing.title + ' — Buy $' + askPrice + ' → Sell ~$' + item.flipPrice + ' on ' + item.flipWhere + ' (+$' + Math.round(profit) + ')');
-
-        deals.push({
-          productId:   'offerup_' + Buffer.from(listingUrl).toString('base64').slice(0, 20),
-          retailer:    'OfferUp',
-          name:        listing.title + ' [Flip → ' + item.flipWhere + ']',
-          url:         listingUrl,
-          imageUrl:    listing.imgSrc || null,
-          price:       askPrice,
-          normalPrice: item.flipPrice,
-          discountPct: discountPct,
-          source:      item.label + ' (+$' + Math.round(profit) + ' profit)',
-        });
-      }
-
-    } catch (err) {
-      console.error('[OfferUp] Error on ' + item.label + ': ' + err.message);
-    } finally {
-      if (page) await page.context().close().catch(function() {});
+  var browser = null;
+  try {
+    browser = await playwright.chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    var ctx = await browser.newContext({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15' });
+    var page = await ctx.newPage();
+    for (var i = 0; i < TERMS.length; i++) {
+      var found = await scrapeTerm(page, TERMS[i]);
+      deals = deals.concat(found);
+      await page.waitForTimeout(800);
     }
-
-    await sleep(2500);
+  } catch (e) {
+    console.error('[OfferUp] error:', e.message);
+  } finally {
+    if (browser) { try { await browser.close(); } catch(e) {} }
   }
-
-  console.log('[OfferUp] Done. ' + deals.length + ' flip opportunity(s) found.');
   return deals;
 }
 
