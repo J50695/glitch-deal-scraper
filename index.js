@@ -43,6 +43,7 @@ const scrapers = [
   { name: '6pm',            module: safeRequire('./scrapers/sixpm'),          enabled: true },
   { name: 'Nordstrom Rack', module: safeRequire('./scrapers/nordstromrack'),  enabled: true },
   { name: 'B&H Photo',      module: safeRequire('./scrapers/bhphoto'),        enabled: true },
+  { name: 'Slickdeals',    module: safeRequire('./scrapers/slickdeals'),   enabled: true },
   { name: 'OfferUp',        module: safeRequire('./scrapers/offerup'),        enabled: true },
 ];
 
