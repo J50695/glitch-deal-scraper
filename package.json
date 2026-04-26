@@ -4,6 +4,7 @@
   "description": "Monitors major retailers 24/7 for price glitches â 70%+ off errors â and fires instant Discord alerts with direct buy links.",
   "main": "index.js",
   "scripts": {
+    "postinstall": "playwright install --with-deps chromium",
     "start": "node index.js",
     "postinstall": "npx playwright install chromium --with-deps"
   },
