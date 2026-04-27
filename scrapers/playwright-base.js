@@ -54,9 +54,12 @@ async function getBrowser() {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--single-process',
+        '--no-zygote',
         '--disable-blink-features=AutomationControlled',
         '--disable-infobars',
-        '--window-size=1920,1080',
+        '--window-size=1280,720',
       ],
     });
     console.log('[Browser] Chromium ready');
