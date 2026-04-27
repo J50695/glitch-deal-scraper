@@ -102,26 +102,49 @@ async function runScraper() {
 
       for (const deal of rawDeals) {
         try {
+          const retailer    = deal.retailer || deal.storeName || scraper.name;
+          const productId   = deal.productId || (retailer + '_' + Buffer.from(deal.url || deal.name || retailer).toString('base64').slice(0, 20));
+          const name        = deal.name;
+          const url         = deal.url || '';
+          const imageUrl    = deal.imageUrl || deal.image || null;
+          const price       = deal.price;
+          const normalPrice = deal.normalPrice || deal.originalPrice || null;
+          const discountPct = deal.discountPct || deal.discount || 0;
+
+          if (!name || !price) continue;
+
+          const normalizedDeal = {
+            retailer,
+            productId,
+            name,
+            url,
+            imageUrl,
+            price,
+            normalPrice,
+            discountPct,
+            source: deal.source || retailer,
+          };
+
           const { productDbId, avgPrice, dataPoints } = db.savePrice({
-            retailer:   deal.retailer,
-            productId:  deal.productId,
-            name:       deal.name,
-            url:        deal.url,
-            imageUrl:   deal.imageUrl,
-            price:      deal.price,
+            retailer,
+            productId,
+            name,
+            url,
+            imageUrl,
+            price,
           });
 
           if (db.hasRecentAlert(productDbId)) continue;
 
-          let confirmedDiscount = deal.discountPct;
-          let confirmedNormal   = deal.normalPrice;
+          let confirmedDiscount = discountPct;
+          let confirmedNormal   = normalPrice;
 
           if (avgPrice && dataPoints >= 3) {
-            const historyDiscount = ((avgPrice - deal.price) / avgPrice) * 100;
+            const historyDiscount = ((avgPrice - price) / avgPrice) * 100;
             if (historyDiscount >= MIN_DISCOUNT_PCT) {
               confirmedDiscount = historyDiscount;
               confirmedNormal   = avgPrice;
-            } else if (deal.discountPct < MIN_DISCOUNT_PCT) {
+            } else if (discountPct < MIN_DISCOUNT_PCT) {
               continue;
             }
           }
@@ -130,19 +153,18 @@ async function runScraper() {
 
           db.recordAlert({
             productDbId,
-            glitchPrice:  deal.price,
-            normalPrice:  confirmedNormal || deal.normalPrice,
+            glitchPrice:  price,
+            normalPrice:  confirmedNormal || normalPrice,
             discountPct:  confirmedDiscount,
-            retailer:     deal.retailer,
+            retailer,
           });
 
           confirmedDeals.push({
-            ...deal,
-            discountPct:  confirmedDiscount,
-            normalPrice:  confirmedNormal || deal.normalPrice,
+            ...normalizedDeal,
+            discountPct: confirmedDiscount,
+            normalPrice: confirmedNormal || normalPrice,
             dataPoints,
           });
-
         } catch (err) {
           console.error('[' + scraper.name + '] Error processing deal:', err.message);
         }

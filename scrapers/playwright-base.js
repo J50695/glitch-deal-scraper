@@ -77,7 +77,7 @@ async function newPage() {
   const b = await getBrowser();
   const ctx = await b.newContext({
     userAgent:       randomUA(),
-    viewport:        { width: 1920, height: 1080 },
+    viewport:        { width: 1280, height: 720 },
     extraHTTPHeaders: STEALTH_HEADERS,
     locale:          'en-US',
     timezoneId:      'America/New_York',

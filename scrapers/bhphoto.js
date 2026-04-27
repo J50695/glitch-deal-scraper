@@ -1,54 +1,64 @@
-var playwright = require('playwright');
+const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
 
-var URLS = [
-  'https://www.bhphotovideo.com/c/used/all/BI/14286',
-  'https://www.bhphotovideo.com/c/used/cameras-photo/BI/7',
-  'https://www.bhphotovideo.com/c/used/computers-solutions/BI/8'
+const TARGETS = [
+  { url: 'https://www.bhphotovideo.com/c/used/all/BI/14286', label: 'Used All' },
+  { url: 'https://www.bhphotovideo.com/c/used/cameras-photo/BI/7', label: 'Used Cameras' },
+  { url: 'https://www.bhphotovideo.com/c/used/computers-solutions/BI/8', label: 'Used Computers' },
 ];
 
-async function scrape(minDiscountPct) {
-  var deals = [];
-  var browser = null;
-  try {
-    browser = await playwright.chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-    var page = await browser.newPage();
-    await page.setExtraHTTPHeaders({ 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36' });
-    for (var i = 0; i < URLS.length; i++) {
-      try {
-        await page.goto(URLS[i], { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForTimeout(2500);
-        var items = await page.evaluate(function() {
-          var results = [];
-          var cards = document.querySelectorAll('[data-selenium="miniProductPage"]');
-          if (!cards.length) cards = document.querySelectorAll('[class*="productCard"]');
-          cards.forEach(function(card) {
-            var titleEl = card.querySelector('[data-selenium="miniProductPageProductName"]') || card.querySelector('[class*="title"]');
-            var priceEl = card.querySelector('[class*="actualPrice"]') || card.querySelector('[class*="price"]');
-            var origEl = card.querySelector('[class*="originalPrice"]') || card.querySelector('del');
-            var linkEl = card.querySelector('a');
-            if (!titleEl || !priceEl) return;
-            var price = parseFloat((priceEl.innerText || '').replace(/[^0-9.]/g, ''));
-            var orig = origEl ? parseFloat((origEl.innerText || '').replace(/[^0-9.]/g, '')) : 0;
-            if (!price || price <= 0) return;
-            results.push({ name: (titleEl.innerText || '').trim(), price: price, orig: orig, url: linkEl ? linkEl.href : '' });
+async function scrape(minDiscountPct = 40) {
+  console.log('[B&H Photo] Starting...');
+  const deals = [];
+
+  for (const target of TARGETS) {
+    let page;
+    try {
+      page = await newPage();
+      await goto(page, target.url);
+      await sleep(2500);
+
+      const products = await page.$$eval('[data-selenium="miniProductPage"],[class*="productCard"]', (cards) => cards.map((card) => {
+        const name = (card.querySelector('[data-selenium="miniProductPageProductName"],[class*="title"]')?.textContent || '').trim();
+        const priceStr = card.querySelector('[class*="actualPrice"],[class*="price"]')?.textContent?.trim();
+        const wasStr = card.querySelector('[class*="originalPrice"],del')?.textContent?.trim();
+        const url = card.querySelector('a')?.href || '';
+        const imgSrc = card.querySelector('img')?.src;
+        return { name, priceStr, wasStr, url, imgSrc };
+      }));
+
+      console.log('[B&H Photo] ' + target.label + ': ' + products.length + ' items');
+
+      for (const product of products) {
+        if (!product.name || !product.priceStr) continue;
+        const price = parsePrice(product.priceStr);
+        const was = parsePrice(product.wasStr);
+        if (!price || !was || was <= price) continue;
+
+        const disc = ((was - price) / was) * 100;
+        if (disc >= minDiscountPct) {
+          deals.push({
+            productId: 'bhphoto_' + Buffer.from(product.url || product.name).toString('base64').slice(0, 20),
+            retailer: 'B&H Photo',
+            name: product.name,
+            url: product.url,
+            imageUrl: product.imgSrc || null,
+            price,
+            normalPrice: was,
+            discountPct: disc,
+            source: 'B&H Photo ' + target.label,
           });
-          return results;
-        });
-        for (var j = 0; j < items.length; j++) {
-          var item = items[j];
-          if (!item.orig || item.orig <= item.price) continue;
-          var disc = Math.round(((item.orig - item.price) / item.orig) * 100);
-          if (disc >= minDiscountPct) {
-            deals.push({ name: item.name, price: item.price, originalPrice: item.orig, discount: disc, url: item.url, storeName: 'B&H Photo' });
-          }
         }
-      } catch (e) {}
+      }
+    } catch (err) {
+      console.error('[B&H Photo] Error on', target.label + ':', err.message);
+    } finally {
+      if (page) await page.context().close().catch(() => {});
     }
-  } catch (e) {
-    console.error('[BHPhoto] error:', e.message);
-  } finally {
-    if (browser) { try { await browser.close(); } catch(e) {} }
+
+    await sleep(2000);
   }
+
+  console.log('[B&H Photo] Done. ' + deals.length + ' deal(s).');
   return deals;
 }
 
