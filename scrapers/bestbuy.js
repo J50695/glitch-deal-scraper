@@ -8,49 +8,18 @@
 
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
 
-// Best Buy pages worth monitoring for glitches
+// Current Best Buy pages that still expose SKU cards in headless Playwright.
 const BESTBUY_TARGETS = [
   {
-    url:   'https://www.bestbuy.com/site/misc/all-deals/pcmcat211400050001.c',
-    label: 'Best Buy - All Deals',
-  },
-  // Laptops & Computers
-  {
-    url:   'https://www.bestbuy.com/site/computers-pcs/pcmcat247400050000.c?id=pcmcat247400050000&intl=nosplash',
-    label: 'Best Buy - Computers',
-  },
-  {
-    url:   'https://www.bestbuy.com/site/laptops/all-laptops/pcmcat138500050001.c?id=pcmcat138500050001',
+    url:   'https://www.bestbuy.com/site/all-laptops/pc-laptops/pcmcat247400050000.c?id=pcmcat247400050000',
     label: 'Best Buy - All Laptops',
   },
   {
-    url:   'https://www.bestbuy.com/site/computers-pcs/desktop-computers/pcmcat143500050002.c?id=pcmcat143500050002',
-    label: 'Best Buy - Desktop PCs',
-  },
-  // TVs & Monitors
-  {
-    url:   'https://www.bestbuy.com/site/electronics/tvs/abcat0101000.c',
-    label: 'Best Buy - TVs',
-  },
-  {
-    url:   'https://www.bestbuy.com/site/tv-video/4k-ultra-hd-tvs/pcmcat748300525041.c?id=pcmcat748300525041',
-    label: 'Best Buy - 4K TVs',
-  },
-  {
-    url:   'https://www.bestbuy.com/site/computer-monitors/all-monitors/pcmcat205400050024.c?id=pcmcat205400050024',
-    label: 'Best Buy - Monitors',
-  },
-  {
-    url:   'https://www.bestbuy.com/site/computer-monitors/gaming-monitors/pcmcat748301547717.c?id=pcmcat748301547717',
-    label: 'Best Buy - Gaming Monitors',
-  },
-  // Open Box & Clearance
-  {
-    url:   'https://www.bestbuy.com/site/electronics/open-box/pcmcat225600050002.c',
+    url:   'https://www.bestbuy.com/site/outlet-refurbished-clearance/open-box-electronics/pcmcat748300666861.c?id=pcmcat748300666861',
     label: 'Best Buy - Open Box',
   },
   {
-    url:   'https://www.bestbuy.com/site/clearance/pcmcat295600050000.c',
+    url:   'https://www.bestbuy.com/site/outlet-refurbished-clearance/clearance-electronics/pcmcat748300666044.c?id=pcmcat748300666044',
     label: 'Best Buy - Clearance',
   },
 ];
@@ -58,33 +27,60 @@ const BESTBUY_TARGETS = [
 async function scrape(minDiscountPct = 70) {
   console.log('[Best Buy] Starting scrape...');
   const deals = [];
+  let emptyTargets = 0;
 
   for (const target of BESTBUY_TARGETS) {
     let page;
     try {
       page = await newPage();
-      await goto(page, target.url);
-      await page.waitForSelector('.sku-item, [data-testid="grid-cell"]', { timeout: 15000 }).catch(() => {});
-      await sleep(2000);
+      await goto(page, target.url, { timeout: 15000 });
+      await page.waitForSelector('a.sku-title, .sku-header a', { timeout: 7000 }).catch(() => {});
+      await sleep(1500);
 
       const products = await page.$$eval(
-        '.sku-item, [data-testid="grid-cell"]',
-        (cards) => cards.map(card => {
-          const name = card.querySelector('.sku-header a, [data-testid="product-title"]')?.textContent?.trim();
-          const url  = card.querySelector('.sku-header a, [data-testid="product-title"]')?.href;
-          const priceEl  = card.querySelector('.priceView-customer-price span:first-child, [data-testid="customer-price"] span');
-          const priceStr = priceEl?.textContent?.trim();
-          const wasEl  = card.querySelector('.pricing-price__regular-price, .priceView-was-price, del');
-          const wasStr = wasEl?.textContent?.trim();
-          const saveEl  = card.querySelector('.priceView-savings, .pricing-price__savings');
-          const saveStr = saveEl?.textContent?.trim();
-          const imgEl  = card.querySelector('.product-image img, [data-testid="product-image"] img');
-          const imgSrc = imgEl?.src;
-          return { name, url, priceStr, wasStr, saveStr, imgSrc };
-        })
+        'a.sku-title, .sku-header a',
+        (anchors) => {
+          const seen = new Set();
+
+          const textList = (root, selector) => Array.from(root.querySelectorAll(selector))
+            .map(el => (el.textContent || '').trim())
+            .filter(Boolean);
+
+          return anchors.map(anchor => {
+            const card = anchor.closest('.product-flexbox, .sku-item');
+            if (!card) return null;
+
+            const url = anchor.href;
+            if (!url || seen.has(url)) return null;
+            seen.add(url);
+
+            const priceTexts = textList(card, '[data-testid="price-block"] span, .priceView-customer-price span, [data-testid="customer-price"] span');
+            const wasTexts = textList(card, '.pricing-price__regular-price, .priceView-was-price, del, [data-testid="crossed-price"] span, [data-testid="list-price"] span, [data-testid="comp-price"] span');
+            const saveTexts = textList(card, '.priceView-savings, .pricing-price__savings, [data-testid="savings-regular-price"], [data-testid="savings-price"]');
+            const imgSrc = card.querySelector('.product-image, .image-section img, img.product-image')?.src || null;
+
+            return {
+              name: (anchor.textContent || '').trim(),
+              url,
+              priceStr: priceTexts.find(text => /\$/.test(text)) || priceTexts[0] || '',
+              wasStr: wasTexts.find(text => /\$/.test(text)) || wasTexts[0] || '',
+              saveStr: saveTexts.find(text => /(save|off|\$)/i.test(text)) || saveTexts[0] || '',
+              imgSrc,
+            };
+          }).filter(Boolean);
+        }
       );
 
       console.log('[Best Buy] ' + target.label + ': found ' + products.length + ' items');
+      if (products.length === 0) {
+        emptyTargets++;
+        if (emptyTargets >= 2) {
+          console.warn('[Best Buy] Repeated empty pages, stopping early.');
+          break;
+        }
+      } else {
+        emptyTargets = 0;
+      }
 
       for (const p of products) {
         if (!p.name || !p.url || !p.priceStr) continue;
@@ -123,7 +119,7 @@ async function scrape(minDiscountPct = 70) {
     } finally {
       if (page) await page.context().close().catch(() => {});
     }
-    await sleep(3000);
+    await sleep(1000);
   }
   console.log('[Best Buy] Done. ' + deals.length + ' glitch deal(s) found.');
   return deals;

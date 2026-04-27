@@ -18,12 +18,13 @@ async function scrape(minDiscountPct = 40) {
   console.log('[OfferUp] Starting...');
   const deals = [];
   let page;
+  let emptySearches = 0;
 
   try {
     page = await newPage();
     for (const term of TERMS) {
       try {
-        const url = 'https://offerup.com/search/?q=' + encodeURIComponent(term.q) + '&condition=1&sort=1';
+        const url = 'https://offerup.com/search/?q=' + encodeURIComponent(term.q) + '&sort=1';
         await goto(page, url);
         await sleep(2500);
 
@@ -32,6 +33,15 @@ async function scrape(minDiscountPct = 40) {
           const url = card.querySelector('a')?.href || '';
           return { priceStr, url };
         }));
+        if (items.length === 0) {
+          emptySearches++;
+          if (emptySearches >= 3) {
+            console.warn('[OfferUp] Repeated empty searches, stopping early.');
+            break;
+          }
+        } else {
+          emptySearches = 0;
+        }
 
         for (const item of items) {
           const price = parsePrice(item.priceStr);

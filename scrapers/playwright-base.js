@@ -33,6 +33,48 @@ function randomUA() {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
+function launchArgs() {
+  const args = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-blink-features=AutomationControlled',
+    '--disable-infobars',
+    '--window-size=1280,720',
+  ];
+
+  // Railway runs Linux containers with a tight memory budget.
+  if (process.platform === 'linux') {
+    args.push('--single-process', '--no-zygote');
+  }
+
+  return args;
+}
+
+function isRetriableBrowserError(err) {
+  const msg = String(err && err.message || err || '').toLowerCase();
+  return (
+    msg.includes('target page, context or browser has been closed') ||
+    msg.includes('browser has been closed') ||
+    msg.includes('browser is closed') ||
+    msg.includes('connection closed') ||
+    msg.includes('channel closed') ||
+    msg.includes('target closed')
+  );
+}
+
+async function resetBrowser() {
+  const current = browser;
+  browser = null;
+  if (!current) return;
+  try {
+    await current.close();
+  } catch {
+    // Best effort: the process may already be gone.
+  }
+}
+
 /**
  * Get (or launch) the shared browser instance.
  */
@@ -50,17 +92,13 @@ async function getBrowser() {
     console.log('[Browser] Launching Chromium...');
     browser = await chromium.launch({
       headless:   true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--single-process',
-        '--no-zygote',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-infobars',
-        '--window-size=1280,720',
-      ],
+      args: launchArgs(),
+    });
+    browser.on('disconnected', () => {
+      if (browser) {
+        console.warn('[Browser] Chromium disconnected');
+        browser = null;
+      }
     });
     console.log('[Browser] Chromium ready');
   } finally {
@@ -74,25 +112,35 @@ async function getBrowser() {
  * Open a new stealth browser page.
  */
 async function newPage() {
-  const b = await getBrowser();
-  const ctx = await b.newContext({
-    userAgent:       randomUA(),
-    viewport:        { width: 1280, height: 720 },
-    extraHTTPHeaders: STEALTH_HEADERS,
-    locale:          'en-US',
-    timezoneId:      'America/New_York',
-  });
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let ctx = null;
+    try {
+      const b = await getBrowser();
+      ctx = await b.newContext({
+        userAgent:        randomUA(),
+        viewport:         { width: 1280, height: 720 },
+        extraHTTPHeaders: STEALTH_HEADERS,
+        locale:           'en-US',
+        timezoneId:       'America/New_York',
+      });
 
-  const page = await ctx.newPage();
+      const page = await ctx.newPage();
 
-  // Remove webdriver property (basic bot detection bypass)
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'plugins',   { get: () => [1, 2, 3] });
-    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-  });
+      // Remove webdriver property (basic bot detection bypass)
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'plugins',   { get: () => [1, 2, 3] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+      });
 
-  return page;
+      return page;
+    } catch (err) {
+      if (ctx) await ctx.close().catch(() => {});
+      if (attempt === 2 || !isRetriableBrowserError(err)) throw err;
+      console.warn('[Browser] newPage failed, relaunching Chromium:', err.message);
+      await resetBrowser();
+    }
+  }
 }
 
 /**
@@ -147,10 +195,7 @@ function parsePrice(str) {
  * Close the browser (call on shutdown).
  */
 async function closeBrowser() {
-  if (browser) {
-    await browser.close();
-    browser = null;
-  }
+  await resetBrowser();
 }
 
 function sleep(ms) {

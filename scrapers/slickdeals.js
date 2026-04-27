@@ -2,7 +2,7 @@ const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
 
 const TARGETS = [
   { url: 'https://slickdeals.net/deals/electronics/', label: 'Electronics' },
-  { url: 'https://slickdeals.net/deals/computers/', label: 'Computers' },
+  { url: 'https://slickdeals.net/computer-deals/', label: 'Computers' },
   { url: 'https://slickdeals.net/deals/gaming/', label: 'Gaming' },
   { url: 'https://slickdeals.net/deals/clothing-accessories/', label: 'Clothing' },
   { url: 'https://slickdeals.net/deals/shoes/', label: 'Shoes' },
@@ -19,14 +19,23 @@ async function scrape(minDiscountPct = 40) {
       await goto(page, target.url);
       await sleep(2500);
 
-      const products = await page.$$eval('[data-type="deal"],.dealCard,[class*="dealCard"],.deal-item', (cards) => cards.slice(0, 20).map((card) => {
-        const name = card.querySelector('[class*="title"],[class*="dealTitle"],h3,h4,a')?.textContent?.trim()?.substring(0, 100);
-        const priceStr = card.querySelector('[class*="price"],[class*="salePrice"]')?.textContent?.trim();
-        const wasStr = card.querySelector('[class*="originalPrice"],[class*="wasPrice"],del,s')?.textContent?.trim();
-        const store = card.querySelector('[class*="store"],[class*="merchant"]')?.textContent?.trim() || 'Unknown';
-        const url = card.querySelector('a[href*="slickdeals"],a[href*="/f/"],a')?.href || '';
-        return { name, priceStr, wasStr, store, url };
-      }));
+      const products = await page.$$eval('a.bp-c-card_title, [class*="card_title"]', (titleLinks) => {
+        const seen = new Set();
+        return titleLinks.map((link) => {
+          const card = link.closest('[data-type="deal"], [class*="DealCard"], [class*="dealCard"], article, li');
+          if (!card) return null;
+
+          const url = link.href || '';
+          if (!url || seen.has(url)) return null;
+          seen.add(url);
+
+          const name = link.textContent?.trim()?.substring(0, 160);
+          const priceStr = card.querySelector('.bp-p-dealCard_price, [class*="dealCard_price"], [class*="salePrice"]')?.textContent?.trim();
+          const wasStr = card.querySelector('.bp-p-dealCard_originalPrice, [class*="originalPrice"], [class*="wasPrice"], del, s')?.textContent?.trim();
+          const store = card.querySelector('.bp-c-card_subtitle, [class*="card_subtitle"], [class*="store"], [class*="merchant"]')?.textContent?.trim() || 'Unknown';
+          return { name, priceStr, wasStr, store, url };
+        }).filter(Boolean);
+      });
 
       console.log('[Slickdeals] ' + target.label + ': ' + products.length + ' items');
 
