@@ -434,12 +434,12 @@
   <!-- Header -->
   <header>
     <div class="header-left">
-      <h1>ð¥ Glitch Deal Scraper</h1>
+      <h1>Glitch Deal Scraper</h1>
       <p id="status-text">Loading...</p>
     </div>
     <div class="header-right">
       <div class="status-dot" id="status-dot"></div>
-      <button class="btn btn-primary" onclick="triggerScrape()">â¡ Scrape Now</button>
+      <button class="btn btn-primary" onclick="triggerScrape()">Run Scan</button>
     </div>
   </header>
 
@@ -447,31 +447,31 @@
   <div class="stats-bar">
     <div class="stat-card">
       <div class="stat-label">Total Alerts</div>
-      <div class="stat-value" id="stat-total">â</div>
+      <div class="stat-value" id="stat-total">-</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Last Run Found</div>
-      <div class="stat-value amber" id="stat-last-batch">â</div>
+      <div class="stat-value amber" id="stat-last-batch">-</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Products Tracked</div>
-      <div class="stat-value normal" id="stat-products">â</div>
+      <div class="stat-value normal" id="stat-products">-</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Alerts (24h)</div>
-      <div class="stat-value green" id="stat-24h">â</div>
+      <div class="stat-value green" id="stat-24h">-</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Next Scan</div>
-      <div class="stat-value normal" id="stat-next" style="font-size:14px">â</div>
+      <div class="stat-value normal" id="stat-next" style="font-size:14px">-</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Healthy Scrapers</div>
-      <div class="stat-value green" id="stat-healthy">â</div>
+      <div class="stat-value green" id="stat-healthy">-</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Degraded / Failing</div>
-      <div class="stat-value red" id="stat-degraded">â</div>
+      <div class="stat-value red" id="stat-degraded">-</div>
     </div>
   </div>
 
@@ -491,12 +491,12 @@
   <div class="filters">
     <span class="filter-label">Retailer:</span>
     <button class="filter-btn active" onclick="setFilter('retailer', null, this)">All</button>
-    <button class="filter-btn" onclick="setFilter('retailer', 'Amazon', this)">ð¦ Amazon</button>
-    <button class="filter-btn" onclick="setFilter('retailer', 'Best Buy', this)">ð Best Buy</button>
-    <button class="filter-btn" onclick="setFilter('retailer', 'Walmart', this)">ð¦ Walmart</button>
-    <button class="filter-btn" onclick="setFilter('retailer', 'Nike', this)">ð Nike</button>
-    <button class="filter-btn" onclick="setFilter('retailer', 'Adidas', this)">ð² Adidas</button>
-    <button class="filter-btn" onclick="setFilter('retailer', 'Target', this)">ð¯ Target</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Amazon', this)">Amazon</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Best Buy', this)">Best Buy</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Walmart', this)">Walmart</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Nike', this)">Nike</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Adidas', this)">Adidas</button>
+    <button class="filter-btn" onclick="setFilter('retailer', 'Target', this)">Target</button>
     &nbsp;
     <span class="filter-label">Discount:</span>
     <button class="filter-btn active" onclick="setFilter('minDiscount', 0, this)">All</button>
@@ -508,7 +508,7 @@
       class="filter-input"
       type="text"
       id="search-input"
-      placeholder="ð Search deals..."
+      placeholder="Search deals..."
       oninput="renderDeals()"
     />
   </div>
@@ -522,7 +522,7 @@
   <!-- Deal Grid -->
   <div class="deal-grid" id="deal-grid">
     <div class="empty" style="grid-column:1/-1">
-      <div class="empty-icon">â³</div>
+      <div class="empty-icon">...</div>
       <h3>Loading deals...</h3>
       <p>First scrape runs 15 seconds after startup</p>
     </div>
@@ -530,7 +530,7 @@
 
   <!-- Run Log -->
   <div class="run-log" id="run-log" style="display:none">
-    <h3>ð Recent Scan Runs</h3>
+    <h3>Recent Scan Runs</h3>
     <div id="run-log-entries"></div>
   </div>
 
@@ -555,12 +555,12 @@
     };
 
     const RETAILER_EMOJI = {
-      'Amazon':   'ð¦',
-      'Best Buy': 'ð',
-      'Walmart':  'ð¦',
-      'Nike':     'ð',
-      'Adidas':   'ð²',
-      'Target':   'ð¯',
+      'Amazon':   'AMZ',
+      'Best Buy': 'BBY',
+      'Walmart':  'WMT',
+      'Nike':     'NKE',
+      'Adidas':   'ADI',
+      'Target':   'TGT',
     };
 
     function fmtPrice(n) {
@@ -575,7 +575,7 @@
     }
 
     function timeUntil(iso) {
-      if (!iso) return 'â';
+      if (!iso) return '-';
       const s = Math.floor((new Date(iso) - Date.now()) / 1000);
       if (s <= 0) return 'now';
       if (s < 60) return `${s}s`;
@@ -618,7 +618,7 @@
       if (visible.length === 0) {
         grid.innerHTML = `
           <div class="empty" style="grid-column:1/-1">
-            <div class="empty-icon">ð</div>
+            <div class="empty-icon">-</div>
             <h3>No deals match your filters</h3>
             <p>Waiting for the next scan, or try adjusting filters above</p>
           </div>
@@ -629,7 +629,7 @@
       grid.innerHTML = visible.map(a => {
         const disc    = Math.round(a.discount_pct);
         const tier    = disc >= 90 ? 'high' : disc >= 80 ? 'med' : 'low';
-        const emoji   = RETAILER_EMOJI[a.retailer] || 'ð';
+        const emoji   = RETAILER_EMOJI[a.retailer] || 'DEAL';
         const color   = RETAILER_COLORS[a.retailer] || '';
         const savings = a.normal_price && a.glitch_price
           ? (a.normal_price - a.glitch_price).toFixed(2)
@@ -652,8 +652,8 @@
               </div>
               ${savings ? `<div class="deal-savings">You save $${savings}</div>` : ''}
               <div class="deal-footer">
-                <span class="deal-time">ð ${timeAgo(a.alerted_at)}</span>
-                <a class="buy-btn" href="${a.url}" target="_blank" rel="noopener">BUY NOW â</a>
+                <span class="deal-time">${timeAgo(a.alerted_at)}</span>
+                <a class="buy-btn" href="${a.url}" target="_blank" rel="noopener">BUY NOW -></a>
               </div>
             </div>
           </div>
@@ -679,7 +679,7 @@
       const degraded = allScrapers.filter(s => s.health === 'degraded').length;
       const failing = allScrapers.filter(s => s.health === 'failing').length;
       const cooldown = allScrapers.filter(s => s.health === 'cooldown').length;
-      summary.textContent = `${healthy} healthy Â· ${degraded} degraded Â· ${failing} failing Â· ${cooldown} cooldown`;
+      summary.textContent = `${healthy} healthy | ${degraded} degraded | ${failing} failing | ${cooldown} cooldown`;
 
       const priority = { failing: 0, degraded: 1, cooldown: 2, running: 3, healthy: 4, idle: 5, disabled: 6 };
       const sorted = [...allScrapers].sort((a, b) => {
@@ -693,7 +693,7 @@
         const lastSeen = scraper.lastFinishedAt
           ? `Last run ${timeAgo(scraper.lastFinishedAt)}`
           : 'No completed run yet';
-        const lastNonZero = scraper.lastNonZeroAt ? ` Â· Non-zero ${timeAgo(scraper.lastNonZeroAt)}` : '';
+        const lastNonZero = scraper.lastNonZeroAt ? ` | Non-zero ${timeAgo(scraper.lastNonZeroAt)}` : '';
         const note = scraper.lastError || scraper.statusReason || '';
 
         return `
@@ -707,8 +707,8 @@
             </div>
             <div class="scraper-meta">Status: ${scraper.status || 'unknown'}</div>
             <div class="scraper-meta">Found / Alerted: ${scraper.lastFound || 0} / ${scraper.lastAlerted || 0}</div>
-            <div class="scraper-meta">Runtime: ${Math.round((scraper.lastDurationMs || 0) / 1000)}s Â· Budget ${Math.round((scraper.timeoutMs || 0) / 1000)}s</div>
-            <div class="scraper-meta">Streaks: empty ${scraper.emptyStreak || 0} Â· error ${scraper.errorStreak || 0} Â· timeout ${scraper.timeoutStreak || 0}</div>
+            <div class="scraper-meta">Runtime: ${Math.round((scraper.lastDurationMs || 0) / 1000)}s | Budget ${Math.round((scraper.timeoutMs || 0) / 1000)}s</div>
+            <div class="scraper-meta">Streaks: empty ${scraper.emptyStreak || 0} | error ${scraper.errorStreak || 0} | timeout ${scraper.timeoutStreak || 0}</div>
             <div class="scraper-meta">${lastSeen}${lastNonZero}</div>
             ${note ? `<div class="scraper-note">${note}</div>` : ''}
           </div>
@@ -731,12 +731,12 @@
       try {
         const stats = await (await fetch('/api/stats')).json();
 
-        document.getElementById('stat-total').textContent    = stats.total_alerts      ?? 'â';
-        document.getElementById('stat-last-batch').textContent = stats.lastBatchNew   ?? 'â';
-        document.getElementById('stat-products').textContent  = stats.total_products  ?? 'â';
-        document.getElementById('stat-24h').textContent     = stats.alerts_24h        ?? 'â';
+        document.getElementById('stat-total').textContent    = stats.total_alerts      ?? '-';
+        document.getElementById('stat-last-batch').textContent = stats.lastBatchNew   ?? '-';
+        document.getElementById('stat-products').textContent  = stats.total_products  ?? '-';
+        document.getElementById('stat-24h').textContent     = stats.alerts_24h        ?? '-';
         document.getElementById('stat-next').textContent     = timeUntil(stats.nextRun);
-        document.getElementById('stat-healthy').textContent  = stats.scraperHealth?.healthy ?? 'â';
+        document.getElementById('stat-healthy').textContent  = stats.scraperHealth?.healthy ?? '-';
         document.getElementById('stat-degraded').textContent = (stats.scraperHealth?.degraded || 0) + (stats.scraperHealth?.failing || 0) + (stats.scraperHealth?.cooldown || 0);
 
         const dot  = document.getElementById('status-dot');
@@ -749,8 +749,8 @@
           const last = stats.lastRun ? `Last scan ${timeAgo(stats.lastRun)}` : 'Waiting for first scan...';
           const issues = (stats.scraperHealth?.degraded || 0) + (stats.scraperHealth?.failing || 0) + (stats.scraperHealth?.cooldown || 0);
           text.textContent = issues > 0
-            ? `${last} Â· ${issues} scraper issue(s) active`
-            : `${last} Â· Scanning every ${stats.intervalMins}min`;
+            ? `${last} | ${issues} scraper issue(s) active`
+            : `${last} | Scanning every ${stats.intervalMins}min`;
         }
       } catch (err) {
         console.error('Failed to fetch stats:', err);
@@ -777,13 +777,13 @@
 
         entries.innerHTML = runs.slice(0, 10).map(r => {
           const scrapersSummary = Object.entries(r.scrapers || {})
-            .map(([k, v]) => v.error ? `${k}:â` : `${k}:${v.alerted || 0}`)
-            .join(' Â· ');
+            .map(([k, v]) => v.error ? `${k}:FAIL` : `${k}:${v.alerted || 0}`)
+            .join(' | ');
           return `
             <div class="run-entry">
-              <span>#${r.run}</span> ${new Date(r.startedAt).toLocaleTimeString()} â
+              <span>#${r.run}</span> ${new Date(r.startedAt).toLocaleTimeString()} -
               <span>${r.totalNew} new deal(s)</span>
-              â ${scrapersSummary}
+              - ${scrapersSummary}
             </div>
           `;
         }).join('');
@@ -795,10 +795,10 @@
       try {
         const res  = await fetch('/api/scrape', { method: 'POST' });
         const data = await res.json();
-        showToast(data.success ? 'â¡ Scan started!' : `â ï¸ ${data.message}`);
+        showToast(data.success ? 'Scan started' : `Warning: ${data.message}`);
         setTimeout(fetchStats, 2000);
       } catch (err) {
-        showToast('â Failed to start scan');
+        showToast('Failed to start scan');
       }
     }
 

@@ -5,39 +5,63 @@
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
 
 const TARGET_TARGETS = [
-  // Existing
   { url: 'https://www.target.com/c/electronics/-/N-5xt1a?type=category&sortBy=pricelow', label: 'Target Electronics'     },
   { url: 'https://www.target.com/c/video-games/-/N-5xsxs?sortBy=pricelow',              label: 'Target Video Games'     },
   { url: 'https://www.target.com/c/clearance/-/N-4zc5d',                                label: 'Target Clearance'       },
-  // Laptops & Computers
   { url: 'https://www.target.com/c/laptops/-/N-5xsxm?sortBy=pricelow',                  label: 'Target Laptops'         },
-  { url: 'https://www.target.com/c/desktop-computers/-/N-5xsxl?sortBy=pricelow',        label: 'Target Desktops'        },
-  { url: 'https://www.target.com/c/computer-monitors/-/N-5yaj3?sortBy=pricelow',        label: 'Target Monitors'        },
-  // TVs & Monitors
   { url: 'https://www.target.com/c/tvs/-/N-5xsxk?sortBy=pricelow',                     label: 'Target TVs'             },
-  { url: 'https://www.target.com/c/4k-tvs/-/N-oo7p6?sortBy=pricelow',                  label: 'Target 4K TVs'          },
-  // Sneakers & Apparel
   { url: 'https://www.target.com/c/shoes/-/N-55r0k?sortBy=pricelow',                    label: 'Target Shoes'           },
-  { url: 'https://www.target.com/c/mens-shoes/-/N-4yhyy?sortBy=pricelow',               label: 'Target Mens Shoes'      },
-  { url: 'https://www.target.com/c/womens-shoes/-/N-4yhyz?sortBy=pricelow',             label: 'Target Womens Shoes'    },
-  { url: 'https://www.target.com/c/mens-clothing/-/N-5xtab?sortBy=pricelow',            label: 'Target Mens Apparel'    },
-  { url: 'https://www.target.com/c/womens-clothing/-/N-5xtaa?sortBy=pricelow',          label: 'Target Womens Apparel'  },
 ];
 
-async function scrape(minDiscountPct = 70) {
+const TARGET_CARD_SELECTOR = '[data-test="product-details"], [data-test="@web/ProductCard/ProductCardBody"]';
+const TARGET_BLOCKED_PATTERNS = [
+  /access denied/i,
+  /verify you are human/i,
+  /please enable cookies/i,
+  /security check/i,
+  /captcha/i,
+];
+
+async function readPageSnapshot(page) {
+  try {
+    return await page.evaluate(() => ({
+      title: document.title || '',
+      body: (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+    }));
+  } catch {
+    return { title: '', body: '' };
+  }
+}
+
+function looksBlocked(snapshot) {
+  const text = `${snapshot.title} ${snapshot.body}`;
+  return TARGET_BLOCKED_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+async function scrape(minDiscountPct = 70, options = {}) {
+  const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
   console.log('[Target] Starting scrape...');
   const deals = [];
+  let emptyTargets = 0;
+  let blockedTargets = 0;
 
   for (const target of TARGET_TARGETS) {
+    if (isAborted()) {
+      console.warn('[Target] Aborted before starting ' + target.label);
+      break;
+    }
+
     let page;
     try {
       page = await newPage();
-      await goto(page, target.url);
-      await page.waitForSelector('[data-test="product-details"], [data-test="@web/ProductCard/ProductCardBody"]', { timeout: 20000 }).catch(() => {});
-      await sleep(3000);
+      await goto(page, target.url, { timeout: 15000 });
+      await page.waitForSelector(TARGET_CARD_SELECTOR, { timeout: 8000 }).catch(() => {});
+      await sleep(1500);
+
+      const snapshot = await readPageSnapshot(page);
 
       const products = await page.$$eval(
-        '[data-test="product-details"], [data-test="@web/ProductCard/ProductCardBody"]',
+        TARGET_CARD_SELECTOR,
         (cards) => cards.slice(0, 48).map(card => {
           const name  = card.querySelector('[data-test="product-title"], a[data-test="product-title"]')?.textContent?.trim();
           const href  = card.querySelector('a[data-test="product-title"], a[href*="/p/"]')?.href;
@@ -54,9 +78,34 @@ async function scrape(minDiscountPct = 70) {
         })
       );
 
-      console.log('[Target] ' + target.label + ': ' + products.length + ' items');
+      const blocked = products.length === 0 && looksBlocked(snapshot);
+      console.log('[Target] ' + target.label + ': ' + products.length + ' items' + (blocked ? ' (blocked)' : ''));
+
+      if (blocked) {
+        blockedTargets += 1;
+        emptyTargets += 1;
+        if (blockedTargets >= 2) {
+          console.warn('[Target] Repeated blocked pages, stopping early.');
+          break;
+        }
+        continue;
+      }
+
+      if (products.length === 0) {
+        emptyTargets += 1;
+        if (emptyTargets >= 3) {
+          console.warn('[Target] Repeated empty pages, stopping early.');
+          break;
+        }
+      } else {
+        emptyTargets = 0;
+      }
 
       for (const p of products) {
+        if (isAborted()) {
+          console.warn('[Target] Aborted during ' + target.label);
+          break;
+        }
         if (!p.name || !p.url || !p.priceStr) continue;
         const price    = parsePrice(p.priceStr);
         const wasPrice = parsePrice(p.wasStr);
@@ -85,7 +134,8 @@ async function scrape(minDiscountPct = 70) {
       }
     } catch (err) { console.error('[Target] Error on ' + target.label + ':', err.message); }
     finally { if (page) await page.context().close().catch(() => {}); }
-    await sleep(4000);
+    if (isAborted()) break;
+    await sleep(1500);
   }
   console.log('[Target] Done. ' + deals.length + ' glitch deal(s) found.');
   return deals;

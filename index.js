@@ -74,7 +74,7 @@ const scrapers = [
   scraperDef('Amazon', './scrapers/amazon', { enabled: !!process.env.KEEPA_API_KEY, timeoutMs: 120000 }),
   scraperDef('Best Buy', './scrapers/bestbuy'),
   scraperDef('Walmart', './scrapers/walmart'),
-  scraperDef('Target', './scrapers/target'),
+  scraperDef('Target', './scrapers/target', { tier: 'experimental', autoCooldown: true, timeoutMs: 45000 }),
   scraperDef('Nike', './scrapers/nike'),
   scraperDef('Adidas', './scrapers/adidas'),
   scraperDef('Farfetch', './scrapers/farfetch'),
@@ -149,6 +149,10 @@ function computeNextRunAt(fromDate = new Date()) {
   return next.toISOString();
 }
 
+function getReportedNextRun() {
+  return isRunning ? computeNextRunAt(new Date()) : nextRun;
+}
+
 function buildScraperSummary(scraper) {
   const state = scraperStates[scraper.name];
   return {
@@ -202,11 +206,12 @@ function shouldSkipScraper(scraper) {
 function deriveHealth(scraper, state) {
   if (!scraper.enabled || state.manuallyDisabled) return 'disabled';
   if (isCoolingDown(state)) return 'cooldown';
+  if (state.running || state.lastStatus === 'running') return 'running';
   if (state.lastStatus === 'timeout' || state.timeoutStreak >= TIMEOUT_STREAK_LIMIT) return 'failing';
   if (state.lastStatus === 'error' || state.errorStreak >= ERROR_STREAK_LIMIT) return 'failing';
   if (state.emptyStreak >= getEmptyStreakLimit(scraper) || state.lastDurationMs >= SLOW_SCRAPER_MS) return 'degraded';
   if (state.lastStatus === 'ok' || state.lastStatus === 'empty') return 'healthy';
-  return state.lastStatus === 'running' ? 'running' : 'idle';
+  return 'idle';
 }
 
 function maybeEnterCooldown(scraper, state) {
@@ -322,12 +327,16 @@ function finalizeScraperState(scraper, outcome) {
 
 async function runScraperWithBudget(scraper) {
   let timeoutId = null;
+  let aborted = false;
 
   try {
     return await Promise.race([
-      Promise.resolve().then(() => scraper.module.scrape(MIN_DISCOUNT_PCT)),
+      Promise.resolve().then(() => scraper.module.scrape(MIN_DISCOUNT_PCT, {
+        isAborted: () => aborted,
+      })),
       new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
+          aborted = true;
           closeBrowser().catch(() => {});
           const err = new Error(`Timed out after ${scraper.timeoutMs}ms`);
           err.code = 'SCRAPER_TIMEOUT';
@@ -350,6 +359,7 @@ async function runScraper() {
 
   isRunning = true;
   lastRun = new Date().toISOString();
+  nextRun = computeNextRunAt(new Date());
   runCount += 1;
 
   const runSummary = {
@@ -404,8 +414,10 @@ async function runScraper() {
       console.log('\n[' + scraper.name + '] Starting...');
       const scraperStart = Date.now();
       state.running = true;
+      state.health = 'running';
       state.lastStartedAt = new Date().toISOString();
       state.lastStatus = 'running';
+      state.lastError = null;
       state.statusReason = null;
 
       try {
@@ -631,7 +643,7 @@ app.get('/api/stats', (req, res) => {
     ...dbStats,
     isRunning,
     lastRun,
-    nextRun,
+    nextRun: getReportedNextRun(),
     runCount,
     lastBatchNew,
     minDiscount: MIN_DISCOUNT_PCT,
@@ -670,13 +682,13 @@ app.post('/api/scrape', (req, res) => {
 
 app.get('/health', (req, res) => {
   const health = getScraperHealthCounts();
-  const status = health.failing > 0 ? 'degraded' : 'ok';
+  const status = (health.failing > 0 || health.degraded > 0 || health.cooldown > 0) ? 'degraded' : 'ok';
   res.json({
     status,
     uptime: Math.round(process.uptime()),
     isRunning,
     lastRun,
-    nextRun,
+    nextRun: getReportedNextRun(),
     scraperHealth: health,
   });
 });
