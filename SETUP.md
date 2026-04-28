@@ -44,6 +44,10 @@ for price glitches. Fires instant Discord alerts, tracks click yield, and lets e
 | SCRAPER_RUN_INTERVALS | Optional | Comma-separated cadence overrides in runs, e.g. `walmart=2,target=4,offerup=4` |
 | MIN_ALERT_SCORE | Optional | Minimum quality score required to alert (default: 0) |
 | PUBLIC_BASE_URL | Optional | Public app URL used for Discord/email click-tracking links |
+| ALERT_COOLDOWN_HOURS | Optional | Hard minimum hours before the same product can alert again (default: 12) |
+| ALERT_STICKY_HOURS | Optional | Sticky repeat-alert window; same deal is suppressed unless the price improves meaningfully (default: 48) |
+| REALERT_MIN_PRICE_DROP_PCT | Optional | Percent price improvement required to re-alert inside the sticky window (default: 5) |
+| REALERT_MIN_PRICE_DROP_ABS | Optional | Dollar price improvement required to re-alert inside the sticky window (default: 10) |
 | SCRAPE_INTERVAL_MINUTES | Optional | How often to scan (default: 10) |
 | EXPERIMENTAL_SCRAPER_CADENCE_RUNS | Optional | Default cadence for weak/experimental scrapers (default: 3) |
 | DISABLED_SCRAPERS | Optional | Comma-separated scraper names to disable, e.g. `target,offerup` |

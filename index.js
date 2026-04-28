@@ -74,6 +74,10 @@ function normalizePublicBaseUrl(value) {
 // ── Config ────────────────────────────────────────────────────
 const MIN_DISCOUNT_PCT = parseFloat(process.env.MIN_DISCOUNT_PCT || '40');
 const MIN_ALERT_SCORE = parseFloat(process.env.MIN_ALERT_SCORE || '0');
+const ALERT_COOLDOWN_HOURS = parseFloat(process.env.ALERT_COOLDOWN_HOURS || '12');
+const ALERT_STICKY_HOURS = parseFloat(process.env.ALERT_STICKY_HOURS || '48');
+const REALERT_MIN_PRICE_DROP_PCT = parseFloat(process.env.REALERT_MIN_PRICE_DROP_PCT || '5');
+const REALERT_MIN_PRICE_DROP_ABS = parseFloat(process.env.REALERT_MIN_PRICE_DROP_ABS || '10');
 const SCRAPE_INTERVAL_MINS = parseInt(process.env.SCRAPE_INTERVAL_MINUTES || '10', 10);
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const SCRAPER_TIMEOUT_MS = parseInt(process.env.SCRAPER_TIMEOUT_MS || '90000', 10);
@@ -317,6 +321,48 @@ function buildTrackedUrl(alertId, source, fallbackUrl = '') {
   if (!alertId) return fallbackUrl || '';
   const relativePath = `/go/${alertId}?source=${encodeURIComponent(source || 'unknown')}`;
   return PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}${relativePath}` : (fallbackUrl || relativePath);
+}
+
+function shouldSuppressRepeatAlert(productDbId, currentPrice) {
+  const latestAlert = db.getLatestAlertForProduct(productDbId);
+  if (!latestAlert) {
+    return { suppress: false, reason: 'first alert' };
+  }
+
+  const alertedAtMs = new Date(latestAlert.alerted_at).getTime();
+  const hoursSince = Number.isFinite(alertedAtMs)
+    ? ((Date.now() - alertedAtMs) / (1000 * 60 * 60))
+    : Number.POSITIVE_INFINITY;
+
+  if (hoursSince < ALERT_COOLDOWN_HOURS) {
+    return {
+      suppress: true,
+      reason: `alerted ${hoursSince.toFixed(1)}h ago`,
+    };
+  }
+
+  const previousPrice = Number(latestAlert.glitch_price || 0);
+  if (!(previousPrice > 0) || !(currentPrice > 0)) {
+    return { suppress: false, reason: 'missing comparable price' };
+  }
+
+  const dropAbs = previousPrice - currentPrice;
+  const dropPct = previousPrice > 0 ? (dropAbs / previousPrice) * 100 : 0;
+  const improvedEnough =
+    dropAbs >= REALERT_MIN_PRICE_DROP_ABS ||
+    dropPct >= REALERT_MIN_PRICE_DROP_PCT;
+
+  if (hoursSince < ALERT_STICKY_HOURS && !improvedEnough) {
+    return {
+      suppress: true,
+      reason: `same price band within ${ALERT_STICKY_HOURS}h sticky window`,
+    };
+  }
+
+  return {
+    suppress: false,
+    reason: improvedEnough ? 'price improved meaningfully' : 'prior alert expired',
+  };
 }
 
 function buildScraperSummary(scraper) {
@@ -653,7 +699,8 @@ async function runScraper() {
               price,
             });
 
-            if (db.hasRecentAlert(productDbId)) continue;
+            const repeatGate = shouldSuppressRepeatAlert(productDbId, price);
+            if (repeatGate.suppress) continue;
 
             let confirmedDiscount = discountPct;
             let confirmedNormal = normalPrice;
@@ -984,6 +1031,7 @@ app.listen(PORT, () => {
   console.log('  Interval   → every ' + SCRAPE_INTERVAL_MINS + ' minutes');
   console.log('  Min Disc.  → ' + MIN_DISCOUNT_PCT + '% off');
   console.log('  Min Score  → ' + MIN_ALERT_SCORE);
+  console.log('  Re-alert   → ' + ALERT_COOLDOWN_HOURS + 'h cooldown, ' + ALERT_STICKY_HOURS + 'h sticky');
   console.log('  Timeout    → ' + Math.round(SCRAPER_TIMEOUT_MS / 1000) + 's per scraper');
   console.log('  Tracking   → ' + (PUBLIC_BASE_URL || '/go/:alertId (dashboard only)'));
   console.log('  Discord    → ' + (process.env.DISCORD_WEBHOOK_URL ? '✅ connected' : '❌ NOT SET'));
