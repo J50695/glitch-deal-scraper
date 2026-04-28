@@ -55,6 +55,7 @@ const EXPERIMENTAL_EMPTY_STREAK_LIMIT = parseInt(process.env.EXPERIMENTAL_EMPTY_
 const ERROR_STREAK_LIMIT = parseInt(process.env.SCRAPER_ERROR_STREAK_LIMIT || '3', 10);
 const TIMEOUT_STREAK_LIMIT = parseInt(process.env.SCRAPER_TIMEOUT_STREAK_LIMIT || '2', 10);
 const DISABLED_SCRAPER_KEYS = parseListEnv(process.env.DISABLED_SCRAPERS);
+const WATCHDOG_ALERT_DEGRADED = String(process.env.WATCHDOG_ALERT_DEGRADED || '').toLowerCase() === 'true';
 
 function scraperDef(name, modulePath, options = {}) {
   const module = safeRequire(modulePath);
@@ -277,6 +278,7 @@ function buildWatchdogAlert(scraper, previousHealth, state) {
   }
 
   if (nextHealth === 'degraded') {
+    if (!WATCHDOG_ALERT_DEGRADED) return null;
     return {
       title: `Scraper degraded: ${scraper.name}`,
       message: `**${scraper.name}** is still running, but output quality has degraded.`,
