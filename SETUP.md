@@ -1,7 +1,7 @@
 # Glitch Deal Scraper — Setup Guide
 
-Monitors Amazon, Best Buy, Walmart, Nike, Adidas, and Target every 10 minutes, 24/7
-for price glitches — items priced 70%+ below normal. Fires instant Discord alerts.
+Monitors Amazon, Best Buy, Walmart, Nike, Adidas, Target, Newegg, Slickdeals, and more every 10 minutes, 24/7
+for price glitches. Fires instant Discord alerts, tracks click yield, and lets each retailer use its own alert floor.
 
 ---
 
@@ -39,13 +39,25 @@ for price glitches — items priced 70%+ below normal. Fires instant Discord ale
 | EMAIL_USER | Optional | Gmail address for email digests |
 | EMAIL_PASS | Optional | Gmail App Password |
 | EMAIL_TO | Optional | Where to send the digest |
-| MIN_DISCOUNT_PCT | Optional | Min % drop to alert (default: 70) |
+| MIN_DISCOUNT_PCT | Optional | Fallback global alert floor when a retailer-specific floor is not set (default: 40) |
+| RETAILER_MIN_DISCOUNTS | Optional | Comma-separated per-retailer alert floors, e.g. `newegg=34,slickdeals=35,offerup=65` |
+| SCRAPER_RUN_INTERVALS | Optional | Comma-separated cadence overrides in runs, e.g. `walmart=2,target=4,offerup=4` |
+| MIN_ALERT_SCORE | Optional | Minimum quality score required to alert (default: 0) |
+| PUBLIC_BASE_URL | Optional | Public app URL used for Discord/email click-tracking links |
 | SCRAPE_INTERVAL_MINUTES | Optional | How often to scan (default: 10) |
+| EXPERIMENTAL_SCRAPER_CADENCE_RUNS | Optional | Default cadence for weak/experimental scrapers (default: 3) |
+| DISABLED_SCRAPERS | Optional | Comma-separated scraper names to disable, e.g. `target,offerup` |
 
 ## Step 4 — Verify It's Working
 
 Once running, open: http://localhost:3000
 The first scan starts 15 seconds after launch. After that, every 10 minutes.
+
+## Recommended Production Defaults
+
+- Keep `Newegg`, `Slickdeals`, `Best Buy`, `Woot`, and your strongest sources on every run.
+- Run blocked or flaky sources less often with `SCRAPER_RUN_INTERVALS`.
+- Set `PUBLIC_BASE_URL` on Railway so Discord and email clicks route through `/go/:alertId` and show up in the dashboard yield metrics.
 
 ## The Flip Strategy
 

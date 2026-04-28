@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ð¥ Glitch Deal Scraper</title>
+  <title>Glitch Deal Scraper</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -197,6 +197,52 @@
       color: #666;
     }
 
+    /* Performance */
+    .performance-board {
+      padding: 18px 24px;
+      background: #0f0f0f;
+      border-bottom: 1px solid #1f1f1f;
+    }
+
+    .performance-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .performance-card {
+      background: #151515;
+      border: 1px solid #262626;
+      border-radius: 10px;
+      padding: 12px;
+    }
+
+    .performance-top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .performance-retailer {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f0f0f0;
+    }
+
+    .performance-yield {
+      font-size: 18px;
+      font-weight: 900;
+      color: #33FF66;
+    }
+
+    .performance-meta {
+      font-size: 12px;
+      color: #888;
+      line-height: 1.6;
+    }
+
     /* ââ Filters ââ */
     .filters {
       padding: 14px 24px;
@@ -357,6 +403,23 @@
       font-weight: 600;
     }
 
+    .deal-meta-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .deal-meta-pill {
+      font-size: 11px;
+      font-weight: 700;
+      color: #ddd;
+      background: #1d1d1d;
+      border: 1px solid #2d2d2d;
+      border-radius: 999px;
+      padding: 4px 8px;
+    }
+
     .deal-footer {
       display: flex;
       align-items: center;
@@ -366,6 +429,12 @@
     }
 
     .deal-time { font-size: 11px; color: #555; }
+
+    .deal-clicks {
+      font-size: 11px;
+      color: #777;
+      margin-top: 4px;
+    }
 
     .buy-btn {
       padding: 8px 18px;
@@ -473,6 +542,18 @@
       <div class="stat-label">Degraded / Failing</div>
       <div class="stat-value red" id="stat-degraded">-</div>
     </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Clicks</div>
+      <div class="stat-value normal" id="stat-clicks-total">-</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Clicks (24h)</div>
+      <div class="stat-value amber" id="stat-clicks-24h">-</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Score (7d)</div>
+      <div class="stat-value normal" id="stat-score-7d">-</div>
+    </div>
   </div>
 
   <section class="health-board">
@@ -483,6 +564,18 @@
     <div class="scraper-grid" id="scraper-grid">
       <div class="scraper-card">
         <div class="scraper-meta">Waiting for scraper health data...</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="performance-board">
+    <div class="health-board-header">
+      <div class="health-board-title">Retailer Yield</div>
+      <div class="health-board-subtitle" id="performance-summary">Loading retailer performance...</div>
+    </div>
+    <div class="performance-grid" id="performance-grid">
+      <div class="performance-card">
+        <div class="performance-meta">Waiting for retailer performance data...</div>
       </div>
     </div>
   </section>
@@ -539,10 +632,10 @@
 
   <script>
     // ââ State âââââââââââââââââââââââââââââââââââââââââââââââââ
-    let allAlerts    = [];
-    let allScrapers  = [];
-    let filters      = { retailer: null, minDiscount: 0 };
-    let refreshTimer = null;
+    let allAlerts        = [];
+    let allScrapers      = [];
+    let retailerYield    = [];
+    let filters          = { retailer: null, minDiscount: 0 };
 
     // ââ Retailer config âââââââââââââââââââââââââââââââââââââââ
     const RETAILER_COLORS = {
@@ -634,6 +727,8 @@
         const savings = a.normal_price && a.glitch_price
           ? (a.normal_price - a.glitch_price).toFixed(2)
           : null;
+        const score = a.quality_score != null ? Math.round(a.quality_score) : null;
+        const trackedUrl = a.id ? `/go/${a.id}?source=dashboard` : a.url;
 
         const imgHtml = a.image_url
           ? `<img class="deal-image" src="${a.image_url}" alt="" loading="lazy" onerror="this.style.display='none'">`
@@ -651,9 +746,18 @@
                 ${a.normal_price ? `<span class="deal-price-normal">${fmtPrice(a.normal_price)}</span>` : ''}
               </div>
               ${savings ? `<div class="deal-savings">You save $${savings}</div>` : ''}
+              <div class="deal-meta-row">
+                ${score != null ? `<span class="deal-meta-pill">Score ${score}</span>` : ''}
+                ${a.signal_label ? `<span class="deal-meta-pill">${a.signal_label}</span>` : ''}
+                ${a.threshold_pct ? `<span class="deal-meta-pill">Floor ${Math.round(a.threshold_pct)}%</span>` : ''}
+                ${a.source_label && a.source_label !== a.retailer ? `<span class="deal-meta-pill">Via ${a.source_label}</span>` : ''}
+              </div>
               <div class="deal-footer">
-                <span class="deal-time">${timeAgo(a.alerted_at)}</span>
-                <a class="buy-btn" href="${a.url}" target="_blank" rel="noopener">BUY NOW -></a>
+                <div>
+                  <div class="deal-time">${timeAgo(a.alerted_at)}</div>
+                  <div class="deal-clicks">${a.click_count || 0} tracked click${(a.click_count || 0) === 1 ? '' : 's'}</div>
+                </div>
+                <a class="buy-btn" href="${trackedUrl}" target="_blank" rel="noopener">BUY NOW -></a>
               </div>
             </div>
           </div>
@@ -706,6 +810,9 @@
               <div class="health-pill ${healthClass(scraper.health)}">${scraper.health}</div>
             </div>
             <div class="scraper-meta">Status: ${scraper.status || 'unknown'}</div>
+            <div class="scraper-meta">Threshold ${Math.round(scraper.thresholdPct || 0)}% | Candidate ${Math.round(scraper.candidateDiscountPct || 0)}%</div>
+            <div class="scraper-meta">Cadence: every ${scraper.cadenceRuns || 1} run(s) | Next eligible #${scraper.nextEligibleRun || '-'}</div>
+            <div class="scraper-meta">Focus: ${scraper.focusLabel || 'General'}</div>
             <div class="scraper-meta">Found / Alerted: ${scraper.lastFound || 0} / ${scraper.lastAlerted || 0}</div>
             <div class="scraper-meta">Runtime: ${Math.round((scraper.lastDurationMs || 0) / 1000)}s | Budget ${Math.round((scraper.timeoutMs || 0) / 1000)}s</div>
             <div class="scraper-meta">Streaks: empty ${scraper.emptyStreak || 0} | error ${scraper.errorStreak || 0} | timeout ${scraper.timeoutStreak || 0}</div>
@@ -714,6 +821,37 @@
           </div>
         `;
       }).join('');
+    }
+
+    function renderPerformance() {
+      const grid = document.getElementById('performance-grid');
+      const summary = document.getElementById('performance-summary');
+
+      if (!retailerYield || retailerYield.length === 0) {
+        summary.textContent = 'No retailer yield data yet';
+        grid.innerHTML = `
+          <div class="performance-card">
+            <div class="performance-meta">No retailer performance data yet.</div>
+          </div>
+        `;
+        return;
+      }
+
+      const totalAlerts = retailerYield.reduce((sum, row) => sum + (row.alerts_count || 0), 0);
+      const totalClicks = retailerYield.reduce((sum, row) => sum + (row.total_clicks || 0), 0);
+      summary.textContent = `${retailerYield.length} active retailers | ${totalAlerts} alerts | ${totalClicks} tracked clicks`;
+
+      grid.innerHTML = retailerYield.map((row) => `
+        <div class="performance-card">
+          <div class="performance-top">
+            <div class="performance-retailer">${row.retailer}</div>
+            <div class="performance-yield">${row.click_yield}x</div>
+          </div>
+          <div class="performance-meta">Alerts: ${row.alerts_count} | Clicks: ${row.total_clicks}</div>
+          <div class="performance-meta">Avg discount: ${Math.round(row.avg_discount_pct || 0)}% | Avg score: ${Math.round(row.avg_quality_score || 0)}</div>
+          <div class="performance-meta">Avg savings: ${fmtPrice(row.avg_savings) || '-'} | Last alert ${row.last_alerted_at ? timeAgo(row.last_alerted_at) : 'never'}</div>
+        </div>
+      `).join('');
     }
 
     // ââ Data Fetching ââââââââââââââââââââââââââââââââââââââââââ
@@ -738,6 +876,9 @@
         document.getElementById('stat-next').textContent     = timeUntil(stats.nextRun);
         document.getElementById('stat-healthy').textContent  = stats.scraperHealth?.healthy ?? '-';
         document.getElementById('stat-degraded').textContent = (stats.scraperHealth?.degraded || 0) + (stats.scraperHealth?.failing || 0) + (stats.scraperHealth?.cooldown || 0);
+        document.getElementById('stat-clicks-total').textContent = stats.total_clicks ?? '-';
+        document.getElementById('stat-clicks-24h').textContent = stats.clicks_24h ?? '-';
+        document.getElementById('stat-score-7d').textContent = stats.avg_alert_score_7d != null ? Math.round(stats.avg_alert_score_7d) : '-';
 
         const dot  = document.getElementById('status-dot');
         const text = document.getElementById('status-text');
@@ -754,6 +895,15 @@
         }
       } catch (err) {
         console.error('Failed to fetch stats:', err);
+      }
+    }
+
+    async function fetchPerformance() {
+      try {
+        retailerYield = await (await fetch('/api/performance?days=7&limit=12')).json();
+        renderPerformance();
+      } catch (err) {
+        console.error('Failed to fetch retailer performance:', err);
       }
     }
 
@@ -812,7 +962,7 @@
 
     // ââ Init & Auto-refresh âââââââââââââââââââââââââââââââââââ
     async function refresh() {
-      await Promise.all([fetchAlerts(), fetchStats(), fetchScrapers(), fetchRunLog()]);
+      await Promise.all([fetchAlerts(), fetchStats(), fetchScrapers(), fetchPerformance(), fetchRunLog()]);
     }
 
     // Initial load

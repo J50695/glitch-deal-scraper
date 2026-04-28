@@ -43,8 +43,37 @@ function parseListEnv(value) {
   );
 }
 
+function parseNumberMapEnv(value) {
+  const map = new Map();
+  for (const entry of String(value || '').split(',')) {
+    const [rawKey, rawValue] = entry.split('=');
+    const key = normalizeScraperKey(rawKey);
+    const parsed = Number.parseFloat(rawValue);
+    if (!key || Number.isNaN(parsed)) continue;
+    map.set(key, parsed);
+  }
+  return map;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function toPositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizePublicBaseUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  return withProtocol.replace(/\/+$/, '');
+}
+
 // ── Config ────────────────────────────────────────────────────
 const MIN_DISCOUNT_PCT = parseFloat(process.env.MIN_DISCOUNT_PCT || '40');
+const MIN_ALERT_SCORE = parseFloat(process.env.MIN_ALERT_SCORE || '0');
 const SCRAPE_INTERVAL_MINS = parseInt(process.env.SCRAPE_INTERVAL_MINUTES || '10', 10);
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const SCRAPER_TIMEOUT_MS = parseInt(process.env.SCRAPER_TIMEOUT_MS || '90000', 10);
@@ -56,18 +85,83 @@ const ERROR_STREAK_LIMIT = parseInt(process.env.SCRAPER_ERROR_STREAK_LIMIT || '3
 const TIMEOUT_STREAK_LIMIT = parseInt(process.env.SCRAPER_TIMEOUT_STREAK_LIMIT || '2', 10);
 const DISABLED_SCRAPER_KEYS = parseListEnv(process.env.DISABLED_SCRAPERS);
 const WATCHDOG_ALERT_DEGRADED = String(process.env.WATCHDOG_ALERT_DEGRADED || '').toLowerCase() === 'true';
+const DEFAULT_EXPERIMENTAL_CADENCE_RUNS = toPositiveInt(process.env.EXPERIMENTAL_SCRAPER_CADENCE_RUNS || '3', 3);
+const DEFAULT_CORE_CADENCE_RUNS = toPositiveInt(process.env.CORE_SCRAPER_CADENCE_RUNS || '1', 1);
+const RETAILER_MIN_DISCOUNTS = parseNumberMapEnv(process.env.RETAILER_MIN_DISCOUNTS);
+const SCRAPER_RUN_INTERVALS = parseNumberMapEnv(process.env.SCRAPER_RUN_INTERVALS);
+const PUBLIC_BASE_URL = normalizePublicBaseUrl(
+  process.env.PUBLIC_BASE_URL ||
+  process.env.APP_BASE_URL ||
+  process.env.BASE_URL ||
+  (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '')
+);
+
+const RETAILER_STRATEGIES = {
+  amazon:          { thresholdPct: 32, cadenceRuns: 1, trustScore: 26, focusLabel: 'Conversion Core' },
+  bestbuy:         { thresholdPct: 44, cadenceRuns: 1, trustScore: 18, focusLabel: 'Electronics Core' },
+  walmart:         { thresholdPct: 52, cadenceRuns: 2, trustScore: 14, focusLabel: 'Blocked Often' },
+  target:          { thresholdPct: 56, cadenceRuns: 4, trustScore: 10, focusLabel: 'Experimental' },
+  nike:            { thresholdPct: 52, cadenceRuns: 2, trustScore: 16, focusLabel: 'Sneaker Core' },
+  adidas:          { thresholdPct: 58, cadenceRuns: 3, trustScore: 12, focusLabel: 'Experimental' },
+  farfetch:        { thresholdPct: 58, cadenceRuns: 3, trustScore: 13, focusLabel: 'Luxury Experimental' },
+  ssense:          { thresholdPct: 58, cadenceRuns: 3, trustScore: 13, focusLabel: 'Luxury Experimental' },
+  woot:            { thresholdPct: 38, cadenceRuns: 1, trustScore: 17, focusLabel: 'High Velocity' },
+  dell:            { thresholdPct: 55, cadenceRuns: 4, trustScore: 9,  focusLabel: 'Experimental' },
+  newegg:          { thresholdPct: 34, cadenceRuns: 1, trustScore: 24, focusLabel: 'Electronics Core' },
+  '6pm':           { thresholdPct: 50, cadenceRuns: 2, trustScore: 14, focusLabel: 'Apparel Core' },
+  nordstromrack:   { thresholdPct: 56, cadenceRuns: 2, trustScore: 14, focusLabel: 'Apparel Core' },
+  bhphoto:         { thresholdPct: 44, cadenceRuns: 3, trustScore: 12, focusLabel: 'Experimental' },
+  slickdeals:      { thresholdPct: 35, cadenceRuns: 1, trustScore: 25, focusLabel: 'Aggregator Core' },
+  offerup:         { thresholdPct: 65, cadenceRuns: 4, trustScore: 8,  focusLabel: 'Low Signal' },
+};
+
+function getRetailerStrategy(name) {
+  const key = normalizeScraperKey(name);
+  const base = RETAILER_STRATEGIES[key] || {};
+  const thresholdOverride = RETAILER_MIN_DISCOUNTS.get(key);
+  const cadenceOverride = SCRAPER_RUN_INTERVALS.get(key);
+  const thresholdPct = thresholdOverride ?? base.thresholdPct ?? MIN_DISCOUNT_PCT;
+  const cadenceBase = cadenceOverride ?? base.cadenceRuns;
+
+  return {
+    key,
+    thresholdPct,
+    cadenceRuns: clamp(
+      Math.round(cadenceBase ?? 1),
+      1,
+      12
+    ),
+    trustScore: base.trustScore ?? 12,
+    focusLabel: base.focusLabel || 'General',
+  };
+}
 
 function scraperDef(name, modulePath, options = {}) {
   const module = safeRequire(modulePath);
+  const strategy = getRetailerStrategy(name);
+  const tier = options.tier || 'core';
   return {
     name,
     key: normalizeScraperKey(name),
     module,
     enabled: options.enabled !== false && !module.__loadError,
-    tier: options.tier || 'core',
+    tier,
     timeoutMs: options.timeoutMs || SCRAPER_TIMEOUT_MS,
     autoCooldown: !!options.autoCooldown,
     loadError: module.__loadError || null,
+    thresholdPct: options.thresholdPct || strategy.thresholdPct,
+    cadenceRuns: clamp(
+      Math.round(options.cadenceRuns || strategy.cadenceRuns || (tier === 'experimental' ? DEFAULT_EXPERIMENTAL_CADENCE_RUNS : DEFAULT_CORE_CADENCE_RUNS)),
+      1,
+      12
+    ),
+    candidateDiscountPct: clamp(
+      Math.round(options.candidateDiscountPct || Math.max(25, (options.thresholdPct || strategy.thresholdPct) - 10)),
+      20,
+      95
+    ),
+    trustScore: options.trustScore ?? strategy.trustScore,
+    focusLabel: options.focusLabel || strategy.focusLabel,
   };
 }
 
@@ -154,6 +248,77 @@ function getReportedNextRun() {
   return isRunning ? computeNextRunAt(new Date()) : nextRun;
 }
 
+function computeScraperNextEligibleRun(scraper) {
+  let candidateRun = Math.max(1, runCount + 1);
+  while (!isScraperDue(scraper, candidateRun)) {
+    candidateRun += 1;
+  }
+  return candidateRun;
+}
+
+function isScraperDue(scraper, runNumber) {
+  const cadence = Math.max(1, scraper.cadenceRuns || 1);
+  return ((runNumber - 1) % cadence) === 0;
+}
+
+function resolveThresholdProfile(retailerName, scraperName) {
+  const retailerProfile = getRetailerStrategy(retailerName);
+  const scraperProfile = getRetailerStrategy(scraperName);
+  const hasRetailerProfile = RETAILER_STRATEGIES[retailerProfile.key] || RETAILER_MIN_DISCOUNTS.has(retailerProfile.key);
+
+  return {
+    thresholdPct: hasRetailerProfile ? retailerProfile.thresholdPct : scraperProfile.thresholdPct,
+    trustScore: Math.max(scraperProfile.trustScore || 0, retailerProfile.trustScore || 0),
+    focusLabel: hasRetailerProfile ? retailerProfile.focusLabel : scraperProfile.focusLabel,
+  };
+}
+
+function computeDealQualityScore({
+  scraper,
+  retailer,
+  price,
+  normalPrice,
+  discountPct,
+  thresholdPct,
+  dataPoints,
+  historyValidated,
+}) {
+  const profile = resolveThresholdProfile(retailer, scraper.name);
+  const savings = normalPrice && price ? Math.max(0, normalPrice - price) : 0;
+  const discountScore = clamp(discountPct * 0.42, 0, 42);
+  const thresholdHeadroomScore = clamp((discountPct - thresholdPct) * 1.5, 0, 15);
+  const savingsScore = clamp(Math.log10(savings + 1) * 8, 0, 14);
+  const trustScore = clamp(profile.trustScore || 0, 0, 18);
+  const historyScore = clamp((dataPoints || 0) * 1.4, 0, 10);
+  const validationBonus = historyValidated ? 6 : (normalPrice ? 2 : 0);
+  const completenessBonus = (price ? 3 : 0) + (normalPrice ? 2 : 0) + (scraper.tier === 'core' ? 4 : 0);
+
+  return Math.round(clamp(
+    discountScore +
+    thresholdHeadroomScore +
+    savingsScore +
+    trustScore +
+    historyScore +
+    validationBonus +
+    completenessBonus,
+    0,
+    100
+  ));
+}
+
+function qualitySignalLabel(score) {
+  if (score >= 85) return 'A-tier';
+  if (score >= 72) return 'Strong';
+  if (score >= 58) return 'Watch';
+  return 'Experimental';
+}
+
+function buildTrackedUrl(alertId, source, fallbackUrl = '') {
+  if (!alertId) return fallbackUrl || '';
+  const relativePath = `/go/${alertId}?source=${encodeURIComponent(source || 'unknown')}`;
+  return PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}${relativePath}` : (fallbackUrl || relativePath);
+}
+
 function buildScraperSummary(scraper) {
   const state = scraperStates[scraper.name];
   return {
@@ -164,6 +329,11 @@ function buildScraperSummary(scraper) {
     status: state.lastStatus,
     running: state.running,
     timeoutMs: scraper.timeoutMs,
+    cadenceRuns: scraper.cadenceRuns,
+    candidateDiscountPct: scraper.candidateDiscountPct,
+    thresholdPct: scraper.thresholdPct,
+    focusLabel: scraper.focusLabel,
+    nextEligibleRun: computeScraperNextEligibleRun(scraper),
     cooldownUntil: state.cooldownUntil,
     lastStartedAt: state.lastStartedAt,
     lastFinishedAt: state.lastFinishedAt,
@@ -200,6 +370,12 @@ function shouldSkipScraper(scraper) {
   }
   if (isCoolingDown(state)) {
     return { status: 'cooldown', reason: 'Cooling down after repeated weak runs' };
+  }
+  if (!isScraperDue(scraper, runCount)) {
+    return {
+      status: 'scheduled',
+      reason: `Cadence gate: runs every ${scraper.cadenceRuns} cycle(s)`,
+    };
   }
   return null;
 }
@@ -334,7 +510,7 @@ async function runScraperWithBudget(scraper) {
 
   try {
     return await Promise.race([
-      Promise.resolve().then(() => scraper.module.scrape(MIN_DISCOUNT_PCT, {
+      Promise.resolve().then(() => scraper.module.scrape(scraper.candidateDiscountPct, {
         isAborted: () => aborted,
       })),
       new Promise((_, reject) => {
@@ -390,7 +566,13 @@ async function runScraper() {
         state.running = false;
         state.lastStatus = skip.status;
         state.statusReason = skip.reason;
-        state.health = deriveHealth(scraper, state);
+        if (skip.status === 'scheduled') {
+          state.health = ['healthy', 'degraded', 'failing', 'cooldown', 'disabled'].includes(state.health)
+            ? state.health
+            : (state.lastFinishedAt ? 'healthy' : 'idle');
+        } else {
+          state.health = deriveHealth(scraper, state);
+        }
         runSummary.scrapers[scraper.name] = {
           status: skip.status,
           health: state.health,
@@ -408,7 +590,12 @@ async function runScraper() {
           alerted: 0,
           durationMs: 0,
           errorMessage: null,
-          details: { health: state.health, reason: skip.reason },
+          details: {
+            health: state.health,
+            reason: skip.reason,
+            cadenceRuns: scraper.cadenceRuns,
+            nextEligibleRun: computeScraperNextEligibleRun(scraper),
+          },
         });
         console.log('[' + scraper.name + '] ⏭  Skipped (' + skip.reason + ')');
         continue;
@@ -438,6 +625,8 @@ async function runScraper() {
             const price = deal.price;
             const normalPrice = deal.normalPrice || deal.originalPrice || null;
             const discountPct = deal.discountPct || deal.discount || 0;
+            const sourceLabel = deal.source || scraper.name;
+            const { thresholdPct, trustScore, focusLabel } = resolveThresholdProfile(retailer, scraper.name);
 
             if (!name || !price) continue;
 
@@ -450,7 +639,9 @@ async function runScraper() {
               price,
               normalPrice,
               discountPct,
-              source: deal.source || retailer,
+              source: sourceLabel,
+              thresholdPct,
+              focusLabel,
             };
 
             const { productDbId, avgPrice, dataPoints } = db.savePrice({
@@ -466,37 +657,73 @@ async function runScraper() {
 
             let confirmedDiscount = discountPct;
             let confirmedNormal = normalPrice;
+            let historyValidated = false;
 
             if (avgPrice && dataPoints >= 3) {
               const historyDiscount = ((avgPrice - price) / avgPrice) * 100;
-              if (historyDiscount >= MIN_DISCOUNT_PCT) {
+              if (historyDiscount >= thresholdPct) {
                 confirmedDiscount = historyDiscount;
                 confirmedNormal = avgPrice;
-              } else if (discountPct < MIN_DISCOUNT_PCT) {
+                historyValidated = true;
+              } else if (discountPct < thresholdPct) {
                 continue;
               }
             }
 
-            if (confirmedDiscount < MIN_DISCOUNT_PCT) continue;
+            if (confirmedDiscount < thresholdPct) continue;
 
-            db.recordAlert({
+            const qualityScore = computeDealQualityScore({
+              scraper,
+              retailer,
+              price,
+              normalPrice: confirmedNormal || normalPrice,
+              discountPct: confirmedDiscount,
+              thresholdPct,
+              dataPoints,
+              historyValidated,
+            });
+            const signalLabel = qualitySignalLabel(qualityScore);
+
+            if (qualityScore < MIN_ALERT_SCORE) continue;
+
+            const alertId = db.recordAlert({
               productDbId,
               glitchPrice: price,
               normalPrice: confirmedNormal || normalPrice,
               discountPct: confirmedDiscount,
               retailer,
+              qualityScore,
+              thresholdPct,
+              signalLabel,
+              sourceLabel,
             });
 
             confirmedDeals.push({
               ...normalizedDeal,
+              alertId,
               discountPct: confirmedDiscount,
               normalPrice: confirmedNormal || normalPrice,
               dataPoints,
+              qualityScore,
+              signalLabel,
+              sourceLabel,
+              trustScore,
+              trackedUrls: {
+                discord: buildTrackedUrl(alertId, 'discord', url),
+                email: buildTrackedUrl(alertId, 'email', url),
+                dashboard: buildTrackedUrl(alertId, 'dashboard', url),
+              },
             });
           } catch (err) {
             console.error('[' + scraper.name + '] Error processing deal:', err.message);
           }
         }
+
+        confirmedDeals.sort((a, b) => {
+          const scoreDiff = (b.qualityScore || 0) - (a.qualityScore || 0);
+          if (scoreDiff !== 0) return scoreDiff;
+          return (b.discountPct || 0) - (a.discountPct || 0);
+        });
 
         const ms = Date.now() - scraperStart;
         const status = safeDeals.length > 0 ? 'ok' : 'empty';
@@ -540,7 +767,7 @@ async function runScraper() {
         }
 
         allNewDeals.push(...confirmedDeals);
-        console.log('[' + scraper.name + '] ✅ ' + safeDeals.length + ' raw → ' + confirmedDeals.length + ' confirmed glitches');
+        console.log('[' + scraper.name + '] ✅ ' + safeDeals.length + ' raw → ' + confirmedDeals.length + ' confirmed glitches (threshold ' + scraper.thresholdPct + '% / cadence ' + scraper.cadenceRuns + 'x)');
       } catch (err) {
         const ms = Date.now() - scraperStart;
         const status = err.code === 'SCRAPER_TIMEOUT' ? 'timeout' : 'error';
@@ -592,6 +819,14 @@ async function runScraper() {
     }
 
     if (allNewDeals.length > 0) {
+      allNewDeals.sort((a, b) => {
+        const scoreDiff = (b.qualityScore || 0) - (a.qualityScore || 0);
+        if (scoreDiff !== 0) return scoreDiff;
+        const discountDiff = (b.discountPct || 0) - (a.discountPct || 0);
+        if (discountDiff !== 0) return discountDiff;
+        return (b.normalPrice || 0) - (a.normalPrice || 0);
+      });
+
       console.log('\n🚨 Sending ' + allNewDeals.length + ' alert(s)...');
       for (const deal of allNewDeals) {
         await notifier.sendDiscordAlert(deal);
@@ -650,8 +885,10 @@ app.get('/api/stats', (req, res) => {
     runCount,
     lastBatchNew,
     minDiscount: MIN_DISCOUNT_PCT,
+    minAlertScore: MIN_ALERT_SCORE,
     intervalMins: SCRAPE_INTERVAL_MINS,
     scraperTimeoutMs: SCRAPER_TIMEOUT_MS,
+    trackingBaseUrl: PUBLIC_BASE_URL,
     enabledScrapers: scrapers.filter((scraper) => scraper.enabled && !scraperStates[scraper.name].manuallyDisabled).map((scraper) => scraper.name),
     scraperHealth: health,
     discordLinked: !!process.env.DISCORD_WEBHOOK_URL,
@@ -673,6 +910,41 @@ app.get('/api/scraper-runs', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+app.get('/api/performance', (req, res) => {
+  const days = Math.min(parseInt(req.query.days || '7', 10), 30);
+  const limit = Math.min(parseInt(req.query.limit || '12', 10), 25);
+  try {
+    res.json(db.getRetailerPerformance({ days, limit }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/go/:alertId', (req, res) => {
+  const alertId = parseInt(req.params.alertId, 10);
+  if (!Number.isFinite(alertId) || alertId <= 0) {
+    return res.status(400).send('Invalid alert');
+  }
+
+  const destination = db.getAlertDestination(alertId);
+  if (!destination || !destination.url) {
+    return res.status(404).send('Alert destination not found');
+  }
+
+  try {
+    db.recordClick({
+      alertId,
+      source: String(req.query.source || 'unknown').slice(0, 50),
+      referrer: req.get('referer') || null,
+      userAgent: req.get('user-agent') || null,
+    });
+  } catch (err) {
+    console.error('[Tracking] Failed to record click for alert #' + alertId + ':', err.message);
+  }
+
+  return res.redirect(destination.url);
 });
 
 app.post('/api/scrape', (req, res) => {
@@ -711,7 +983,9 @@ app.listen(PORT, () => {
   console.log('  Dashboard  → http://localhost:' + PORT);
   console.log('  Interval   → every ' + SCRAPE_INTERVAL_MINS + ' minutes');
   console.log('  Min Disc.  → ' + MIN_DISCOUNT_PCT + '% off');
+  console.log('  Min Score  → ' + MIN_ALERT_SCORE);
   console.log('  Timeout    → ' + Math.round(SCRAPER_TIMEOUT_MS / 1000) + 's per scraper');
+  console.log('  Tracking   → ' + (PUBLIC_BASE_URL || '/go/:alertId (dashboard only)'));
   console.log('  Discord    → ' + (process.env.DISCORD_WEBHOOK_URL ? '✅ connected' : '❌ NOT SET'));
   console.log('  Email      → ' + (process.env.EMAIL_USER ? '✅ connected' : '❌ not set (optional)'));
   console.log('  Keepa/Amzn → ' + (process.env.KEEPA_API_KEY ? '✅ connected' : '⚠️  not set (Amazon disabled)'));
