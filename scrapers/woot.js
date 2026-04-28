@@ -34,7 +34,7 @@ async function fetchCategory(slug) {
       const url2 = 'https://www.woot.com/' + slug + '/deals';
       const res2 = await axios.get(url2, { headers: { ...HEADERS, Accept: 'text/html' }, timeout: 15000 });
       // parse __NEXT_DATA__
-      const m = res2.data.match(/<script id="__NEXT_DATA__"[^>]*>([sS]*?)</script>/);
+      const m = res2.data.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
       if (!m) return [];
       const json = JSON.parse(m[1]);
       const offers = json && json.props && json.props.pageProps && json.props.pageProps.offers;

@@ -104,7 +104,98 @@
     .stat-value { font-size: 22px; font-weight: 800; color: #FF3333; margin-top: 2px; }
     .stat-value.green  { color: #33FF66; }
     .stat-value.amber  { color: #FFD700; }
+    .stat-value.red    { color: #FF6666; }
     .stat-value.normal { color: #f0f0f0; }
+
+    /* ââ Scraper Health ââ */
+    .health-board {
+      padding: 18px 24px;
+      background: #101010;
+      border-bottom: 1px solid #1f1f1f;
+    }
+
+    .health-board-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .health-board-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f0f0f0;
+    }
+
+    .health-board-subtitle {
+      font-size: 12px;
+      color: #777;
+    }
+
+    .scraper-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .scraper-card {
+      background: #151515;
+      border: 1px solid #262626;
+      border-radius: 10px;
+      padding: 12px;
+    }
+
+    .scraper-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .scraper-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f0f0f0;
+    }
+
+    .scraper-tier {
+      font-size: 10px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+    }
+
+    .health-pill {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      border-radius: 999px;
+      padding: 4px 8px;
+    }
+
+    .health-healthy  { background: rgba(51, 255, 102, 0.12); color: #33FF66; }
+    .health-degraded { background: rgba(255, 209, 102, 0.12); color: #FFD166; }
+    .health-failing  { background: rgba(255, 70, 70, 0.12); color: #FF6666; }
+    .health-cooldown { background: rgba(255, 153, 0, 0.12); color: #FF9900; }
+    .health-disabled { background: rgba(120, 120, 120, 0.12); color: #999; }
+    .health-idle,
+    .health-running  { background: rgba(255, 255, 255, 0.08); color: #ddd; }
+
+    .scraper-meta,
+    .scraper-note {
+      font-size: 12px;
+      color: #888;
+      line-height: 1.5;
+    }
+
+    .scraper-note {
+      margin-top: 8px;
+      color: #666;
+    }
 
     /* ââ Filters ââ */
     .filters {
@@ -374,7 +465,27 @@
       <div class="stat-label">Next Scan</div>
       <div class="stat-value normal" id="stat-next" style="font-size:14px">â</div>
     </div>
+    <div class="stat-card">
+      <div class="stat-label">Healthy Scrapers</div>
+      <div class="stat-value green" id="stat-healthy">â</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Degraded / Failing</div>
+      <div class="stat-value red" id="stat-degraded">â</div>
+    </div>
   </div>
+
+  <section class="health-board">
+    <div class="health-board-header">
+      <div class="health-board-title">Scraper Health</div>
+      <div class="health-board-subtitle" id="health-summary">Loading scraper health...</div>
+    </div>
+    <div class="scraper-grid" id="scraper-grid">
+      <div class="scraper-card">
+        <div class="scraper-meta">Waiting for scraper health data...</div>
+      </div>
+    </div>
+  </section>
 
   <!-- Filters -->
   <div class="filters">
@@ -429,6 +540,7 @@
   <script>
     // ââ State âââââââââââââââââââââââââââââââââââââââââââââââââ
     let allAlerts    = [];
+    let allScrapers  = [];
     let filters      = { retailer: null, minDiscount: 0 };
     let refreshTimer = null;
 
@@ -468,6 +580,10 @@
       if (s <= 0) return 'now';
       if (s < 60) return `${s}s`;
       return `${Math.floor(s/60)}m ${s%60}s`;
+    }
+
+    function healthClass(health) {
+      return `health-${health || 'idle'}`;
     }
 
     // ââ Filters âââââââââââââââââââââââââââââââââââââââââââââââ
@@ -545,6 +661,61 @@
       }).join('');
     }
 
+    function renderScrapers() {
+      const grid = document.getElementById('scraper-grid');
+      const summary = document.getElementById('health-summary');
+
+      if (!allScrapers || allScrapers.length === 0) {
+        summary.textContent = 'No scraper health data yet';
+        grid.innerHTML = `
+          <div class="scraper-card">
+            <div class="scraper-meta">No scraper health data yet.</div>
+          </div>
+        `;
+        return;
+      }
+
+      const healthy = allScrapers.filter(s => s.health === 'healthy').length;
+      const degraded = allScrapers.filter(s => s.health === 'degraded').length;
+      const failing = allScrapers.filter(s => s.health === 'failing').length;
+      const cooldown = allScrapers.filter(s => s.health === 'cooldown').length;
+      summary.textContent = `${healthy} healthy Â· ${degraded} degraded Â· ${failing} failing Â· ${cooldown} cooldown`;
+
+      const priority = { failing: 0, degraded: 1, cooldown: 2, running: 3, healthy: 4, idle: 5, disabled: 6 };
+      const sorted = [...allScrapers].sort((a, b) => {
+        const pa = priority[a.health] ?? 99;
+        const pb = priority[b.health] ?? 99;
+        if (pa !== pb) return pa - pb;
+        return a.name.localeCompare(b.name);
+      });
+
+      grid.innerHTML = sorted.map((scraper) => {
+        const lastSeen = scraper.lastFinishedAt
+          ? `Last run ${timeAgo(scraper.lastFinishedAt)}`
+          : 'No completed run yet';
+        const lastNonZero = scraper.lastNonZeroAt ? ` Â· Non-zero ${timeAgo(scraper.lastNonZeroAt)}` : '';
+        const note = scraper.lastError || scraper.statusReason || '';
+
+        return `
+          <div class="scraper-card">
+            <div class="scraper-card-header">
+              <div>
+                <div class="scraper-name">${scraper.name}</div>
+                <div class="scraper-tier">${scraper.tier}</div>
+              </div>
+              <div class="health-pill ${healthClass(scraper.health)}">${scraper.health}</div>
+            </div>
+            <div class="scraper-meta">Status: ${scraper.status || 'unknown'}</div>
+            <div class="scraper-meta">Found / Alerted: ${scraper.lastFound || 0} / ${scraper.lastAlerted || 0}</div>
+            <div class="scraper-meta">Runtime: ${Math.round((scraper.lastDurationMs || 0) / 1000)}s Â· Budget ${Math.round((scraper.timeoutMs || 0) / 1000)}s</div>
+            <div class="scraper-meta">Streaks: empty ${scraper.emptyStreak || 0} Â· error ${scraper.errorStreak || 0} Â· timeout ${scraper.timeoutStreak || 0}</div>
+            <div class="scraper-meta">${lastSeen}${lastNonZero}</div>
+            ${note ? `<div class="scraper-note">${note}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
     // ââ Data Fetching ââââââââââââââââââââââââââââââââââââââââââ
     async function fetchAlerts() {
       try {
@@ -565,19 +736,33 @@
         document.getElementById('stat-products').textContent  = stats.total_products  ?? 'â';
         document.getElementById('stat-24h').textContent     = stats.alerts_24h        ?? 'â';
         document.getElementById('stat-next').textContent     = timeUntil(stats.nextRun);
+        document.getElementById('stat-healthy').textContent  = stats.scraperHealth?.healthy ?? 'â';
+        document.getElementById('stat-degraded').textContent = (stats.scraperHealth?.degraded || 0) + (stats.scraperHealth?.failing || 0) + (stats.scraperHealth?.cooldown || 0);
 
         const dot  = document.getElementById('status-dot');
         const text = document.getElementById('status-text');
         if (stats.isRunning) {
           dot.classList.add('running');
-          text.textContent = 'ð Scanning retailers...';
+          text.textContent = 'Scanning retailers now...';
         } else {
           dot.classList.remove('running');
           const last = stats.lastRun ? `Last scan ${timeAgo(stats.lastRun)}` : 'Waiting for first scan...';
-          text.textContent = `${last} Â· Scanning every ${stats.intervalMins}min`;
+          const issues = (stats.scraperHealth?.degraded || 0) + (stats.scraperHealth?.failing || 0) + (stats.scraperHealth?.cooldown || 0);
+          text.textContent = issues > 0
+            ? `${last} Â· ${issues} scraper issue(s) active`
+            : `${last} Â· Scanning every ${stats.intervalMins}min`;
         }
       } catch (err) {
         console.error('Failed to fetch stats:', err);
+      }
+    }
+
+    async function fetchScrapers() {
+      try {
+        allScrapers = await (await fetch('/api/scrapers')).json();
+        renderScrapers();
+      } catch (err) {
+        console.error('Failed to fetch scrapers:', err);
       }
     }
 
@@ -627,12 +812,11 @@
 
     // ââ Init & Auto-refresh âââââââââââââââââââââââââââââââââââ
     async function refresh() {
-      await Promise.all([fetchAlerts(), fetchStats()]);
+      await Promise.all([fetchAlerts(), fetchStats(), fetchScrapers(), fetchRunLog()]);
     }
 
     // Initial load
     refresh();
-    fetchRunLog();
  
     // Auto-refresh every 30 seconds
     setInterval(refresh, 30000);
