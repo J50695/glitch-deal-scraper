@@ -15,42 +15,67 @@ const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
 const SSENSE_TARGETS = [
   {
     url:   'https://www.ssense.com/en-us/men/sale?sort=discount',
-    label: 'SSENSE — Men\'s Sale (Biggest Discount)',
+    label: 'SSENSE Mens Sale',
   },
   {
     url:   'https://www.ssense.com/en-us/women/sale?sort=discount',
-    label: 'SSENSE — Women\'s Sale (Biggest Discount)',
+    label: 'SSENSE Womens Sale',
   },
   {
     url:   'https://www.ssense.com/en-us/men/shoes?sale=true&sort=discount',
-    label: 'SSENSE — Men\'s Shoes Sale',
-  },
-  {
-    url:   'https://www.ssense.com/en-us/women/shoes?sale=true&sort=discount',
-    label: 'SSENSE — Women\'s Shoes Sale',
-  },
-  {
-    url:   'https://www.ssense.com/en-us/men/clothing?sale=true&sort=discount',
-    label: 'SSENSE — Men\'s Clothing Sale',
+    label: 'SSENSE Mens Shoes Sale',
   },
 ];
 
-async function scrape(minDiscountPct) {
+const SSENSE_CARD_SELECTOR = 'figure, [class*="ProductCard"], [class*="product-tile"], li[class*="ProductCard"]';
+const BLOCKED_PATTERNS = [
+  /access denied/i,
+  /verify you are human/i,
+  /security check/i,
+  /captcha/i,
+  /forbidden/i,
+];
+
+async function readPageSnapshot(page) {
+  try {
+    return await page.evaluate(() => ({
+      title: document.title || '',
+      body: (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+    }));
+  } catch {
+    return { title: '', body: '' };
+  }
+}
+
+function looksBlocked(snapshot) {
+  const text = `${snapshot.title} ${snapshot.body}`;
+  return BLOCKED_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+async function scrape(minDiscountPct, options = {}) {
   if (minDiscountPct === undefined) minDiscountPct = 70;
+  const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
   console.log('[SSENSE] Starting designer sale scrape...');
   var deals = [];
+  var emptyTargets = 0;
+  var blockedTargets = 0;
 
   for (var i = 0; i < SSENSE_TARGETS.length; i++) {
+    if (isAborted()) {
+      console.warn('[SSENSE] Aborted before starting ' + SSENSE_TARGETS[i].label);
+      break;
+    }
+
     var target = SSENSE_TARGETS[i];
     var page = null;
     try {
       page = await newPage();
-      await goto(page, target.url);
+      await goto(page, target.url, { timeout: 15000 });
 
-      await page.waitForSelector('figure, [class*="ProductCard"], [class*="product-tile"]', {
-        timeout: 25000,
+      await page.waitForSelector(SSENSE_CARD_SELECTOR, {
+        timeout: 8000,
       }).catch(function() {});
-      await sleep(3000);
+      await sleep(1500);
 
       await page.evaluate(function() {
         var btns = document.querySelectorAll('button');
@@ -62,13 +87,16 @@ async function scrape(minDiscountPct) {
       }).catch(function() {});
       await sleep(1000);
 
-      for (var s = 0; s < 5; s++) {
+      for (var s = 0; s < 2; s++) {
+        if (isAborted()) break;
         await page.evaluate(function() { window.scrollBy(0, window.innerHeight * 2); });
-        await sleep(1200);
+        await sleep(1000);
       }
 
+      var snapshot = await readPageSnapshot(page);
+
       var products = await page.$$eval(
-        'figure, [class*="ProductCard"], [class*="product-tile"], li[class*="ProductCard"]',
+        SSENSE_CARD_SELECTOR,
         function(cards) {
           return cards.slice(0, 60).map(function(card) {
             var designerEl = card.querySelector('[class*="designer"], [class*="brand"]');
@@ -109,9 +137,34 @@ async function scrape(minDiscountPct) {
         }
       );
 
-      console.log('[SSENSE] ' + target.label + ': found ' + products.length + ' items');
+      var blocked = products.length === 0 && looksBlocked(snapshot);
+      console.log('[SSENSE] ' + target.label + ': found ' + products.length + ' items' + (blocked ? ' (blocked)' : ''));
+
+      if (blocked) {
+        blockedTargets += 1;
+        emptyTargets += 1;
+        if (blockedTargets >= 2) {
+          console.warn('[SSENSE] Repeated blocked pages, stopping early.');
+          break;
+        }
+        continue;
+      }
+
+      if (products.length === 0) {
+        emptyTargets += 1;
+        if (emptyTargets >= 2) {
+          console.warn('[SSENSE] Repeated empty pages, stopping early.');
+          break;
+        }
+      } else {
+        emptyTargets = 0;
+      }
 
       for (var j = 0; j < products.length; j++) {
+        if (isAborted()) {
+          console.warn('[SSENSE] Aborted during ' + target.label);
+          break;
+        }
         var p = products[j];
         if (!p.name || !p.href) continue;
 
@@ -157,7 +210,8 @@ async function scrape(minDiscountPct) {
       }
     }
 
-    await sleep(4000);
+    if (isAborted()) break;
+    await sleep(1500);
   }
 
   console.log('[SSENSE] Done. ' + deals.length + ' glitch deal(s) found.');

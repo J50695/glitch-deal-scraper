@@ -77,11 +77,11 @@ const scrapers = [
   scraperDef('Walmart', './scrapers/walmart'),
   scraperDef('Target', './scrapers/target', { tier: 'experimental', autoCooldown: true, timeoutMs: 45000 }),
   scraperDef('Nike', './scrapers/nike'),
-  scraperDef('Adidas', './scrapers/adidas'),
-  scraperDef('Farfetch', './scrapers/farfetch'),
-  scraperDef('SSENSE', './scrapers/ssense'),
+  scraperDef('Adidas', './scrapers/adidas', { tier: 'experimental', autoCooldown: true, timeoutMs: 60000 }),
+  scraperDef('Farfetch', './scrapers/farfetch', { tier: 'experimental', autoCooldown: true, timeoutMs: 60000 }),
+  scraperDef('SSENSE', './scrapers/ssense', { tier: 'experimental', autoCooldown: true, timeoutMs: 60000 }),
   scraperDef('Woot', './scrapers/woot'),
-  scraperDef('Dell', './scrapers/dell'),
+  scraperDef('Dell', './scrapers/dell', { tier: 'experimental', autoCooldown: true, timeoutMs: 45000 }),
   scraperDef('Newegg', './scrapers/newegg'),
   scraperDef('6pm', './scrapers/sixpm'),
   scraperDef('Nordstrom Rack', './scrapers/nordstromrack'),
@@ -208,8 +208,9 @@ function deriveHealth(scraper, state) {
   if (!scraper.enabled || state.manuallyDisabled) return 'disabled';
   if (isCoolingDown(state)) return 'cooldown';
   if (state.running || state.lastStatus === 'running') return 'running';
-  if (state.lastStatus === 'timeout' || state.timeoutStreak >= TIMEOUT_STREAK_LIMIT) return 'failing';
-  if (state.lastStatus === 'error' || state.errorStreak >= ERROR_STREAK_LIMIT) return 'failing';
+  if (state.timeoutStreak >= TIMEOUT_STREAK_LIMIT) return 'failing';
+  if (state.errorStreak >= ERROR_STREAK_LIMIT) return 'failing';
+  if (state.lastStatus === 'timeout' || state.lastStatus === 'error') return 'degraded';
   if (state.emptyStreak >= getEmptyStreakLimit(scraper) || state.lastDurationMs >= SLOW_SCRAPER_MS) return 'degraded';
   if (state.lastStatus === 'ok' || state.lastStatus === 'empty') return 'healthy';
   return 'idle';

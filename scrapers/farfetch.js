@@ -13,41 +13,66 @@ const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
 const FARFETCH_TARGETS = [
   {
     url:   'https://www.farfetch.com/shopping/men/sale-2/items.aspx?view=180&sort=2',
-    label: 'Farfetch — Men\'s Sale (Most Discounted)',
+    label: 'Farfetch Mens Sale',
   },
   {
     url:   'https://www.farfetch.com/shopping/women/sale-2/items.aspx?view=180&sort=2',
-    label: 'Farfetch — Women\'s Sale (Most Discounted)',
+    label: 'Farfetch Womens Sale',
   },
   {
     url:   'https://www.farfetch.com/shopping/men/sneakers-1/items.aspx?view=180&sort=2&priceTo=200',
-    label: 'Farfetch — Men\'s Sneakers Sale',
-  },
-  {
-    url:   'https://www.farfetch.com/shopping/women/sneakers-1/items.aspx?view=180&sort=2&priceTo=200',
-    label: 'Farfetch — Women\'s Sneakers Sale',
-  },
-  {
-    url:   'https://www.farfetch.com/shopping/men/clothing-1/items.aspx?view=180&sort=2&priceTo=100',
-    label: 'Farfetch — Men\'s Clothing Deep Sale',
+    label: 'Farfetch Mens Sneakers Sale',
   },
 ];
 
-async function scrape(minDiscountPct = 70) {
+const FARFETCH_CARD_SELECTOR = '[data-component="ProductCard"], [data-testid="product-card"], [class*="ProductCard"], li[data-testid]';
+const BLOCKED_PATTERNS = [
+  /access denied/i,
+  /verify you are human/i,
+  /security check/i,
+  /captcha/i,
+  /forbidden/i,
+];
+
+async function readPageSnapshot(page) {
+  try {
+    return await page.evaluate(() => ({
+      title: document.title || '',
+      body: (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+    }));
+  } catch {
+    return { title: '', body: '' };
+  }
+}
+
+function looksBlocked(snapshot) {
+  const text = `${snapshot.title} ${snapshot.body}`;
+  return BLOCKED_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+async function scrape(minDiscountPct = 70, options = {}) {
+  const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
   console.log('[Farfetch] Starting designer sale scrape...');
   const deals = [];
+  let emptyTargets = 0;
+  let blockedTargets = 0;
 
   for (const target of FARFETCH_TARGETS) {
+    if (isAborted()) {
+      console.warn('[Farfetch] Aborted before starting ' + target.label);
+      break;
+    }
+
     let page;
     try {
       page = await newPage();
-      await goto(page, target.url);
+      await goto(page, target.url, { timeout: 15000 });
 
       // Farfetch loads dynamically — wait for product grid
-      await page.waitForSelector('[data-component="ProductCard"], [data-testid="product-card"]', {
-        timeout: 25000,
+      await page.waitForSelector(FARFETCH_CARD_SELECTOR, {
+        timeout: 8000,
       }).catch(() => {});
-      await sleep(3000);
+      await sleep(1500);
 
       // Accept cookie banner if it appears
       await page.evaluate(() => {
@@ -57,13 +82,16 @@ async function scrape(minDiscountPct = 70) {
       await sleep(1000);
 
       // Scroll to load more products
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 2; i++) {
+        if (isAborted()) break;
         await page.evaluate(() => window.scrollBy(0, window.innerHeight * 2));
-        await sleep(1500);
+        await sleep(1000);
       }
 
+      const snapshot = await readPageSnapshot(page);
+
       const products = await page.$$eval(
-        '[data-component="ProductCard"], [data-testid="product-card"], [class*="ProductCard"], li[data-testid]',
+        FARFETCH_CARD_SELECTOR,
         (cards) => cards.slice(0, 60).map(card => {
           const brandEl  = card.querySelector('[data-component="ProductCardBrandName"], [data-testid="brand-name"], [class*="BrandName"]');
           const nameEl   = card.querySelector('[data-component="ProductCardDescription"], [data-testid="product-description"], [class*="Description"]');
@@ -93,9 +121,34 @@ async function scrape(minDiscountPct = 70) {
         })
       );
 
-      console.log(`[Farfetch] ${target.label}: found ${products.length} items`);
+      const blocked = products.length === 0 && looksBlocked(snapshot);
+      console.log('[Farfetch] ' + target.label + ': found ' + products.length + ' items' + (blocked ? ' (blocked)' : ''));
+
+      if (blocked) {
+        blockedTargets += 1;
+        emptyTargets += 1;
+        if (blockedTargets >= 2) {
+          console.warn('[Farfetch] Repeated blocked pages, stopping early.');
+          break;
+        }
+        continue;
+      }
+
+      if (products.length === 0) {
+        emptyTargets += 1;
+        if (emptyTargets >= 2) {
+          console.warn('[Farfetch] Repeated empty pages, stopping early.');
+          break;
+        }
+      } else {
+        emptyTargets = 0;
+      }
 
       for (const p of products) {
+        if (isAborted()) {
+          console.warn('[Farfetch] Aborted during ' + target.label);
+          break;
+        }
         if (!p.name || !p.href) continue;
 
         const url      = p.href.startsWith('http') ? p.href : `https://www.farfetch.com${p.href}`;
@@ -138,7 +191,8 @@ async function scrape(minDiscountPct = 70) {
       if (page) await page.context().close().catch(() => {});
     }
 
-    await sleep(4000);
+    if (isAborted()) break;
+    await sleep(1500);
   }
 
   console.log(`[Farfetch] Done. ${deals.length} glitch deal(s) found.`);
