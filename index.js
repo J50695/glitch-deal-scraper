@@ -1,7 +1,7 @@
 // ============================================================
 //  GLITCH DEAL SCRAPER v3
 //  Monitors: Amazon (Keepa), Best Buy, Walmart, Target, Nike,
-//            Adidas, Farfetch, SSENSE, Woot, Dell, Newegg,
+//            Adidas, Farfetch, SSENSE, Woot, Dell, Lenovo, Newegg,
 //            6pm, Nordstrom Rack, B&H Photo, OfferUp — every 10 min
 //  Categories: Electronics, Laptops, TVs, Sneakers, Designer
 //  Alerts:   Discord webhook (instant) + Email digest
@@ -111,6 +111,7 @@ const RETAILER_STRATEGIES = {
   ssense:          { thresholdPct: 58, cadenceRuns: 3, trustScore: 13, focusLabel: 'Luxury Experimental' },
   woot:            { thresholdPct: 38, cadenceRuns: 1, trustScore: 17, focusLabel: 'High Velocity' },
   dell:            { thresholdPct: 55, cadenceRuns: 4, trustScore: 9,  focusLabel: 'Experimental' },
+  lenovo:          { thresholdPct: 42, cadenceRuns: 1, trustScore: 20, focusLabel: 'Direct OEM Core' },
   newegg:          { thresholdPct: 34, cadenceRuns: 1, trustScore: 24, focusLabel: 'Electronics Core' },
   '6pm':           { thresholdPct: 50, cadenceRuns: 2, trustScore: 14, focusLabel: 'Apparel Core' },
   nordstromrack:   { thresholdPct: 56, cadenceRuns: 2, trustScore: 14, focusLabel: 'Apparel Core' },
@@ -180,6 +181,7 @@ const scrapers = [
   scraperDef('SSENSE', './scrapers/ssense', { tier: 'experimental', autoCooldown: true, timeoutMs: 60000 }),
   scraperDef('Woot', './scrapers/woot'),
   scraperDef('Dell', './scrapers/dell', { tier: 'experimental', autoCooldown: true, timeoutMs: 45000 }),
+  scraperDef('Lenovo', './scrapers/lenovo', { timeoutMs: 30000 }),
   scraperDef('Newegg', './scrapers/newegg'),
   scraperDef('6pm', './scrapers/sixpm'),
   scraperDef('Nordstrom Rack', './scrapers/nordstromrack'),
