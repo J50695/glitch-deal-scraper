@@ -8,32 +8,39 @@
 // ============================================================
 
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const NIKE_TARGETS = [
   { url: 'https://www.nike.com/w/sale-3yaep',            label: 'Nike â Sale' },
   { url: 'https://www.nike.com/w/mens-shoes-nik1zy7ok',  label: 'Nike â Men\'s Shoes Sale' },
   { url: 'https://www.nike.com/w/womens-shoes-5e1x6zy7ok', label: 'Nike â Women\'s Shoes Sale' },
-  { url: 'https://www.nike.com/w/mens-clothing-6ymx6znik1', label: 'Nike â Men\'s Apparel Sale' },
 ];
 
-async function scrape(minDiscountPct = 70) {
+async function scrape(minDiscountPct = 70, options = {}) {
+  const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
   console.log('[Nike] Starting scrape...');
   const deals = [];
 
   for (const target of NIKE_TARGETS) {
+    if (isAborted()) {
+      console.warn('[Nike] Aborted before starting ' + target.label);
+      break;
+    }
+
     let page;
     try {
       page = await newPage();
-      await goto(page, target.url);
+      await goto(page, target.url, { timeout: 15000 });
 
       // Nike loads products lazily â scroll to get more items
       await page.waitForSelector('[data-testid="product-card"], .product-card', { timeout: 20000 }).catch(() => {});
-      await sleep(2000);
+      await sleep(1200);
 
       // Scroll down to load more products
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 2; i++) {
+        if (isAborted()) break;
         await page.evaluate(() => window.scrollBy(0, window.innerHeight * 2));
-        await sleep(1500);
+        await sleep(900);
       }
 
       const products = await page.$$eval(
@@ -65,6 +72,10 @@ async function scrape(minDiscountPct = 70) {
       console.log(`[Nike] ${target.label}: ${products.length} items`);
 
       for (const p of products) {
+        if (isAborted()) {
+          console.warn('[Nike] Aborted during ' + target.label);
+          break;
+        }
         if (!p.name || !p.url) continue;
 
         const current  = parsePrice(p.currentStr);
@@ -85,7 +96,7 @@ async function scrape(minDiscountPct = 70) {
           const fullName = p.subname ? `${p.name} â ${p.subname}` : p.name;
           console.log(`[Nike] ð¥ ${fullName} â $${current} (${Math.round(discountPct)}% off)`);
           deals.push({
-            productId:   `nike_${Buffer.from(p.url).toString('base64').slice(0, 20)}`,
+            productId:   buildProductId('nike', p.url),
             retailer:    'Nike',
             name:        fullName,
             url:         p.url,
@@ -104,7 +115,8 @@ async function scrape(minDiscountPct = 70) {
       if (page) await page.context().close().catch(() => {});
     }
 
-    await sleep(5000); // Nike is picky about request timing
+    if (isAborted()) break;
+    await sleep(1200);
   }
 
   console.log(`[Nike] Done. ${deals.length} glitch deal(s) found.`);

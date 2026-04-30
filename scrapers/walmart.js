@@ -8,6 +8,7 @@
 
 const axios = require('axios');
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 // Walmart category IDs to monitor
 const WALMART_CATEGORIES = [
@@ -67,6 +68,30 @@ function looksBlocked(snapshot) {
   return BLOCKED_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+async function isHardBlocked(url) {
+  try {
+    const res = await axios.get(url, {
+      timeout: 10000,
+      headers: {
+        'User-Agent': WALMART_HEADERS['User-Agent'],
+        'Accept': 'text/html',
+        'Accept-Language': WALMART_HEADERS['Accept-Language'],
+        'Referer': WALMART_HEADERS['Referer'],
+      },
+      validateStatus: () => true,
+      maxRedirects: 5,
+    });
+    const html = String(res.data || '').toLowerCase().replace(/\s+/g, ' ');
+    const finalUrl = String(res.request?.res?.responseUrl || res.config?.url || '');
+    return finalUrl.includes('/blocked?url=')
+      || html.includes('robot or human')
+      || html.includes('captcha')
+      || html.includes('verify you are human');
+  } catch {
+    return false;
+  }
+}
+
 async function scrapePlaywright(minDiscountPct, options = {}) {
   const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
 
@@ -82,6 +107,14 @@ async function scrapePlaywright(minDiscountPct, options = {}) {
 
     let page;
     try {
+      if (await isHardBlocked(target.url)) {
+        console.log('[Walmart] ' + target.label + ': blocked by Walmart at HTTP layer');
+        blockedTargets += 1;
+        emptyTargets += 1;
+        console.warn('[Walmart] Blocked by Walmart, stopping early.');
+        break;
+      }
+
       page = await newPage();
       await goto(page, target.url, { timeout: 15000 });
       await page.waitForSelector(WALMART_CARD_SELECTOR, { timeout: 8000 }).catch(() => {});
@@ -145,7 +178,7 @@ async function scrapePlaywright(minDiscountPct, options = {}) {
         else if (p.saveStr) { const m = p.saveStr.match(/(\d+)%/); if (m) discountPct = parseInt(m[1]); }
         if (discountPct >= minDiscountPct) {
           deals.push({
-            productId:   'walmart_' + Buffer.from(p.url).toString('base64').slice(0, 20),
+            productId:   buildProductId('walmart', p.url),
             retailer:    'Walmart', name: p.name, url: p.url,
             imageUrl:    p.imgSrc || null, price,
             normalPrice: normalPrice || null, discountPct,

@@ -1,4 +1,5 @@
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const TARGETS = [
   { url: 'https://www.bhphotovideo.com/c/buy/SLR-Digital-Cameras/ci/15488/N/4294182649', label: 'Used DSLR Cameras' },
@@ -57,7 +58,7 @@ async function scrape(minDiscountPct = 40) {
         const disc = ((was - price) / was) * 100;
         if (disc >= minDiscountPct) {
           deals.push({
-            productId: 'bhphoto_' + Buffer.from(product.url || product.name).toString('base64').slice(0, 20),
+            productId: buildProductId('bhphoto', product.url || product.name),
             retailer: 'B&H Photo',
             name: product.name,
             url: product.url,

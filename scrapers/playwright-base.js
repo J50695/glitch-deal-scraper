@@ -126,6 +126,15 @@ async function newPage() {
 
       const page = await ctx.newPage();
 
+      // Speeds up heavy retail pages and avoids macOS font-download prompts.
+      await page.route('**/*', (route) => {
+        const type = route.request().resourceType();
+        if (type === 'font' || type === 'image' || type === 'media') {
+          return route.abort();
+        }
+        return route.continue();
+      });
+
       // Remove webdriver property (basic bot detection bypass)
       await page.addInitScript(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });

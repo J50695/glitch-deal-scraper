@@ -1,4 +1,5 @@
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const TARGETS = [
   { url: 'https://www.6pm.com/men-shoes?s=isCloseout/desc/goLiveDate/desc', label: 'Mens Shoes' },
@@ -7,29 +8,58 @@ const TARGETS = [
   { url: 'https://www.6pm.com/men-clothing?s=isCloseout/desc/goLiveDate/desc', label: 'Mens Clothing' },
 ];
 
-async function scrape(minDiscountPct = 40) {
+async function scrape(minDiscountPct = 40, options = {}) {
+  const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
   console.log('[6pm] Starting...');
   const deals = [];
+  let emptyTargets = 0;
 
   for (const target of TARGETS) {
+    if (isAborted()) {
+      console.warn('[6pm] Aborted before starting ' + target.label);
+      break;
+    }
+
     let page;
     try {
       page = await newPage();
-      await goto(page, target.url);
-      await sleep(3000);
+      await goto(page, target.url, { timeout: 15000 });
+      await page.waitForSelector('article a[href*="/product/"], article a[href*="/p/"]', { timeout: 8000 }).catch(() => {});
+      await sleep(1500);
 
-      const products = await page.$$eval('article,[class*="product"],[data-product-id]', (cards) => cards.slice(0, 30).map((card) => {
-        const name = card.querySelector('[class*="productName"],[class*="product-name"],h3,h4')?.textContent?.trim()?.substring(0, 80);
-        const priceStr = card.querySelector('[class*="salePrice"],[class*="sale-price"]')?.textContent?.trim();
-        const wasStr = card.querySelector('[class*="originalRetailPrice"],[class*="original"],del,s')?.textContent?.trim();
-        const url = card.querySelector('a')?.href || '';
-        const imgSrc = card.querySelector('img')?.src;
+      const products = await page.$$eval('article', (cards) => cards.slice(0, 60).map((card) => {
+        const detailLink = card.querySelector('a[href*="/product/"], a[href*="/p/"]');
+        const brand = card.querySelector('.NQ-z span, [data-testid="brand-name"]')?.textContent?.trim();
+        const product = card.querySelector('.OQ-z, [data-testid="product-name"]')?.textContent?.trim();
+        const name = [brand, product].filter(Boolean).join(' - ') || detailLink?.getAttribute('title')?.trim();
+        const priceStr = card.querySelector('.V4-z, [data-testid="price"]')?.textContent?.trim()
+          || detailLink?.textContent?.match(/On sale for \\$[\\d,.]+/i)?.[0]?.replace(/On sale for /i, '')
+          || null;
+        const wasStr = card.querySelector('.Z4-z, [data-testid="original-price"]')?.textContent?.trim()
+          || detailLink?.textContent?.match(/MSRP \\$[\\d,.]+/i)?.[0]?.replace(/MSRP:? /i, '')
+          || null;
+        const url = detailLink?.href || '';
+        const imgSrc = card.querySelector('img')?.src || null;
         return { name, priceStr, wasStr, url, imgSrc };
-      }));
+      }).filter((item) => item.url));
 
       console.log('[6pm] ' + target.label + ': ' + products.length + ' items');
 
+      if (products.length === 0) {
+        emptyTargets += 1;
+        if (emptyTargets >= 2) {
+          console.warn('[6pm] Repeated empty pages, stopping early.');
+          break;
+        }
+      } else {
+        emptyTargets = 0;
+      }
+
       for (const product of products) {
+        if (isAborted()) {
+          console.warn('[6pm] Aborted during ' + target.label);
+          break;
+        }
         if (!product.name || !product.priceStr) continue;
         const price = parsePrice(product.priceStr);
         const was = parsePrice(product.wasStr);
@@ -38,7 +68,7 @@ async function scrape(minDiscountPct = 40) {
         const disc = ((was - price) / was) * 100;
         if (disc >= minDiscountPct) {
           deals.push({
-            productId: 'sixpm_' + Buffer.from(product.url || product.name).toString('base64').slice(0, 20),
+            productId: buildProductId('sixpm', product.url || product.name),
             retailer: '6pm',
             name: product.name,
             url: product.url,
@@ -56,7 +86,8 @@ async function scrape(minDiscountPct = 40) {
       if (page) await page.context().close().catch(() => {});
     }
 
-    await sleep(3000);
+    if (isAborted()) break;
+    await sleep(1200);
   }
 
   console.log('[6pm] Done. ' + deals.length + ' deal(s).');

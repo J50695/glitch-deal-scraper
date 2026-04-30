@@ -7,6 +7,7 @@
 // ============================================================
 
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 // Current Best Buy pages that still expose SKU cards in headless Playwright.
 const BESTBUY_TARGETS = [
@@ -102,7 +103,7 @@ async function scrape(minDiscountPct = 70) {
         if (discountPct >= minDiscountPct) {
           console.log('[Best Buy] Glitch: ' + p.name + ' - $' + price + ' (' + Math.round(discountPct) + '% off)');
           deals.push({
-            productId:   'bestbuy_' + Buffer.from(p.url).toString('base64').slice(0, 20),
+            productId:   buildProductId('bestbuy', p.url),
             retailer:    'Best Buy',
             name:        p.name,
             url:         p.url,

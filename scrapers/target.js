@@ -2,7 +2,9 @@
 //  scrapers/target.js - Target Price Glitch Detector
 // ============================================================
 
+const axios = require('axios');
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const TARGET_TARGETS = [
   { url: 'https://www.target.com/c/electronics/-/N-5xt1a?type=category&sortBy=pricelow', label: 'Target Electronics'     },
@@ -20,6 +22,9 @@ const TARGET_BLOCKED_PATTERNS = [
   /please enable cookies/i,
   /security check/i,
   /captcha/i,
+  /targetgrocery/i,
+  /shop groceries/i,
+  /sign in for the best experience/i,
 ];
 
 async function readPageSnapshot(page) {
@@ -38,6 +43,24 @@ function looksBlocked(snapshot) {
   return TARGET_BLOCKED_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+async function isWrongCategoryShell(url) {
+  try {
+    const res = await axios.get(url, {
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0 Safari/537.36',
+        'Accept': 'text/html',
+      },
+      validateStatus: () => true,
+    });
+    const html = String(res.data || '').replace(/\s+/g, ' ');
+    return /<title[^>]*>\s*shop groceries\s*:\s*target\s*<\/title>/i.test(html) ||
+      /rel="canonical"[^>]*\/c\/grocery\/-\/N-5xt1a/i.test(html);
+  } catch {
+    return false;
+  }
+}
+
 async function scrape(minDiscountPct = 70, options = {}) {
   const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
   console.log('[Target] Starting scrape...');
@@ -53,6 +76,17 @@ async function scrape(minDiscountPct = 70, options = {}) {
 
     let page;
     try {
+      if (await isWrongCategoryShell(target.url)) {
+        console.log('[Target] ' + target.label + ': stale Target shell / grocery redirect');
+        blockedTargets += 1;
+        emptyTargets += 1;
+        if (blockedTargets >= 1) {
+          console.warn('[Target] Target category route is stale or redirected, stopping early.');
+          break;
+        }
+        continue;
+      }
+
       page = await newPage();
       await goto(page, target.url, { timeout: 15000 });
       await page.waitForSelector(TARGET_CARD_SELECTOR, { timeout: 8000 }).catch(() => {});
@@ -124,7 +158,7 @@ async function scrape(minDiscountPct = 70, options = {}) {
         }
         if (discountPct >= minDiscountPct) {
           deals.push({
-            productId:   'target_' + Buffer.from(p.url).toString('base64').slice(0, 20),
+            productId:   buildProductId('target', p.url),
             retailer:    'Target', name: p.name, url: p.url,
             imageUrl:    p.imgSrc || null, price,
             normalPrice: normalPrice || null, discountPct,

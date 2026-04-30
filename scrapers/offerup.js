@@ -1,4 +1,5 @@
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const TERMS = [
   { q: 'Jordan 1 High', flip: 280, label: 'Jordan 1 High' },
@@ -14,7 +15,8 @@ const TERMS = [
   { q: 'AirPods Pro 2', flip: 180, label: 'AirPods Pro 2' },
 ];
 
-async function scrape(minDiscountPct = 40) {
+async function scrape(minDiscountPct = 40, options = {}) {
+  const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
   console.log('[OfferUp] Starting...');
   const deals = [];
   let page;
@@ -23,16 +25,28 @@ async function scrape(minDiscountPct = 40) {
   try {
     page = await newPage();
     for (const term of TERMS) {
+      if (isAborted()) {
+        console.warn('[OfferUp] Aborted before starting ' + term.label);
+        break;
+      }
       try {
-        const url = 'https://offerup.com/search/?q=' + encodeURIComponent(term.q) + '&sort=1';
-        await goto(page, url);
-        await sleep(2500);
+        const url = 'https://offerup.com/search?q=' + encodeURIComponent(term.q) + '&sort=1';
+        await goto(page, url, { timeout: 15000 });
+        await page.waitForSelector('a[href*="/item/detail/"]', { timeout: 7000 }).catch(() => {});
+        await sleep(1500);
 
-        const items = await page.$$eval('li[data-testid],[class*="listing"]', (cards) => cards.map((card) => {
-          const priceStr = card.querySelector('[class*="price"]')?.textContent?.trim();
-          const url = card.querySelector('a')?.href || '';
-          return { priceStr, url };
-        }));
+        const items = await page.$$eval('a[href*="/item/detail/"]', (links) => links.slice(0, 48).map((link) => {
+          const card = link.closest('li, article, div');
+          const name = card?.querySelector('[class*="MuiTypography-subtitle1"]')?.textContent?.trim()
+            || link.getAttribute('title')?.trim()
+            || '';
+          const priceStr = card?.querySelector('[class*="MuiTypography-body1"]')?.textContent?.trim()
+            || card?.textContent?.match(/\\$\\d[\\d,]*/)?.[0]
+            || null;
+          const imgSrc = card?.querySelector('img')?.src || null;
+          return { name, priceStr, url: link.href || '', imgSrc };
+        }).filter((item) => item.url));
+
         if (items.length === 0) {
           emptySearches++;
           if (emptySearches >= 3) {
@@ -44,6 +58,10 @@ async function scrape(minDiscountPct = 40) {
         }
 
         for (const item of items) {
+          if (isAborted()) {
+            console.warn('[OfferUp] Aborted during ' + term.label);
+            break;
+          }
           const price = parsePrice(item.priceStr);
           if (!price || price <= 0) continue;
 
@@ -51,11 +69,11 @@ async function scrape(minDiscountPct = 40) {
           const disc = Math.round((profit / term.flip) * 100);
           if (profit >= 30) {
             deals.push({
-              productId: 'offerup_' + Buffer.from(item.url || term.q).toString('base64').slice(0, 20),
+              productId: buildProductId('offerup', item.url || term.q),
               retailer: 'OfferUp',
-              name: term.label + ' [Flip +$' + Math.round(profit) + ']',
+              name: (item.name || term.label) + ' [Flip +$' + Math.round(profit) + ']',
               url: item.url || 'https://offerup.com/search/?q=' + encodeURIComponent(term.q),
-              imageUrl: null,
+              imageUrl: item.imgSrc || null,
               price,
               normalPrice: term.flip,
               discountPct: disc,
@@ -67,6 +85,7 @@ async function scrape(minDiscountPct = 40) {
         console.error('[OfferUp] Error on', term.label + ':', err.message);
       }
 
+      if (isAborted()) break;
       await sleep(800);
     }
   } catch (err) {

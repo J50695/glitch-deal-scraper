@@ -2,7 +2,9 @@
 //  scrapers/adidas.js â Adidas Price Glitch Detector
 // ============================================================
 
+const axios = require('axios');
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const ADIDAS_TARGETS = [
   { url: 'https://www.adidas.com/us/sale',                       label: 'Adidas Sale' },
@@ -17,6 +19,9 @@ const BLOCKED_PATTERNS = [
   /security check/i,
   /captcha/i,
   /forbidden/i,
+  /unable to give you access to our site/i,
+  /reference error:/i,
+  /extra security in place/i,
 ];
 
 async function readPageSnapshot(page) {
@@ -35,6 +40,26 @@ function looksBlocked(snapshot) {
   return BLOCKED_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+async function isHardBlocked(url) {
+  try {
+    const res = await axios.get(url, {
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0 Safari/537.36',
+        'Accept': 'text/html',
+      },
+      validateStatus: () => true,
+      maxRedirects: 5,
+    });
+    const html = String(res.data || '').toLowerCase().replace(/\s+/g, ' ');
+    return html.includes('unable to give you access to our site')
+      || html.includes('reference error:')
+      || html.includes('extra security in place');
+  } catch {
+    return false;
+  }
+}
+
 async function scrape(minDiscountPct = 70, options = {}) {
   const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
   console.log('[Adidas] Starting scrape...');
@@ -50,6 +75,17 @@ async function scrape(minDiscountPct = 70, options = {}) {
 
     let page;
     try {
+      if (await isHardBlocked(target.url)) {
+        console.log('[Adidas] ' + target.label + ': blocked by Adidas at HTTP layer');
+        blockedTargets += 1;
+        emptyTargets += 1;
+        if (blockedTargets >= 1) {
+          console.warn('[Adidas] Blocked by Adidas, stopping early.');
+          break;
+        }
+        continue;
+      }
+
       page = await newPage();
       await goto(page, target.url, { timeout: 15000 });
       await page.waitForSelector(ADIDAS_CARD_SELECTOR, { timeout: 8000 }).catch(() => {});
@@ -132,7 +168,7 @@ async function scrape(minDiscountPct = 70, options = {}) {
         if (discountPct >= minDiscountPct) {
           console.log(`[Adidas] ð¥ ${p.name} â $${current} (${Math.round(discountPct)}% off)`);
           deals.push({
-            productId:   `adidas_${Buffer.from(p.url).toString('base64').slice(0, 20)}`,
+            productId:   buildProductId('adidas', p.url),
             retailer:    'Adidas',
             name:        p.name,
             url:         p.url,

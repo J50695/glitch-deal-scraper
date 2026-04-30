@@ -6,79 +6,174 @@
 //  Their deals page and category endpoints expose structured JSON.
 // ============================================================
 
-const axios = require('axios');
-const { parsePrice, sleep } = require('./playwright-base');
+const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const WOOT_CATEGORIES = [
-  { slug: 'electronics',  name: 'Woot Electronics'  },
-  { slug: 'computers',    name: 'Woot Computers'     },
-  { slug: 'tools-garden', name: 'Woot Tools'         },
-  { slug: 'sports',       name: 'Woot Sports'        },
-  { slug: 'home',         name: 'Woot Home'          },
-  { slug: 'kids',         name: 'Woot Toys'          },
+  { url: 'https://www.woot.com/category/electronics', name: 'Woot Electronics', categoryKey: 'tech', structuredOnly: true, enabled: true },
+  { url: 'https://www.woot.com/category/computers', name: 'Woot Computers', categoryKey: 'pc', structuredOnly: true, enabled: true },
+  { url: 'https://www.woot.com/category/home', name: 'Woot Home', categoryKey: 'home', structuredOnly: true, enabled: true },
+  { url: 'https://www.woot.com/category/tools-garden', name: 'Woot Tools', enabled: false, skipReason: 'No stable structured searchOffers response' },
+  { url: 'https://www.woot.com/category/sports', name: 'Woot Sports', enabled: false, skipReason: 'No stable structured searchOffers response' },
+  { url: 'https://www.woot.com/category/kids', name: 'Woot Toys', enabled: false, skipReason: 'Mixed-category results produced noisy false positives' },
 ];
 
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0 Safari/537.36',
-  'Accept': 'application/json',
-};
+function extractOfferHit(decodedUrl, json) {
+  const offers = json?.data?.searchOffers?.Offers;
+  if (!Array.isArray(offers)) return null;
+  const categoryKeyMatch = decodedUrl.match(/Categories:\s*\[\s*"([^"]+)"\s*\]/);
+  const sortMatch = decodedUrl.match(/Sort:\s*([A-Za-z]+)/);
+  return {
+    categoryKey: categoryKeyMatch ? categoryKeyMatch[1] : null,
+    sort: sortMatch ? sortMatch[1] : null,
+    offers,
+  };
+}
 
-async function fetchCategory(slug) {
+function scoreOfferHit(target, hit) {
+  let score = hit.offers.length;
+  if (target.categoryKey && hit.categoryKey === target.categoryKey) score += 100;
+  if (hit.sort === 'BestSelling') score += 30;
+  if (hit.sort === 'NewestFirst') score += 20;
+
+  for (const offer of hit.offers.slice(0, 5)) {
+    const item = Array.isArray(offer?.Items) ? offer.Items[0] : null;
+    if (offer?.Title) score += 4;
+    if (offer?.Slug) score += 3;
+    if (item?.SalePrice != null) score += 3;
+    if (item?.ListPrice != null) score += 3;
+  }
+
+  return score;
+}
+
+function pickBestStructuredOffers(target, hits) {
+  const candidates = hits
+    .filter((hit) => Array.isArray(hit.offers) && hit.offers.length > 0)
+    .filter((hit) => !target.categoryKey || !hit.categoryKey || hit.categoryKey === target.categoryKey)
+    .sort((a, b) => scoreOfferHit(target, b) - scoreOfferHit(target, a));
+
+  return candidates[0]?.offers || [];
+}
+
+async function fetchCategoryOffers(target) {
+  let page;
   try {
-    const url = 'https://www.woot.com/plus/api/offers/list?site=' + slug + '&perpage=50&page=1';
-    const res = await axios.get(url, { headers: HEADERS, timeout: 15000 });
-    return res.data && res.data.offers ? res.data.offers : [];
-  } catch (err) {
-    try {
-      // fallback: hits section
-      const url2 = 'https://www.woot.com/' + slug + '/deals';
-      const res2 = await axios.get(url2, { headers: { ...HEADERS, Accept: 'text/html' }, timeout: 15000 });
-      // parse __NEXT_DATA__
-      const m = res2.data.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-      if (!m) return [];
-      const json = JSON.parse(m[1]);
-      const offers = json && json.props && json.props.pageProps && json.props.pageProps.offers;
-      return Array.isArray(offers) ? offers : [];
-    } catch (e) {
+    page = await newPage();
+    const responseHits = [];
+
+    page.on('response', async (res) => {
+      const url = res.url();
+      if (res.status() !== 200 || !url.includes('/graphql?query=') || !url.includes('searchOffers')) return;
+      try {
+        const decodedUrl = decodeURIComponent(url);
+        const json = await res.json();
+        const hit = extractOfferHit(decodedUrl, json);
+        if (hit) responseHits.push(hit);
+      } catch {
+        // Ignore individual response parsing failures.
+      }
+    });
+
+    await goto(page, target.url, { timeout: 15000 });
+    await sleep(4500);
+
+    const structuredOffers = pickBestStructuredOffers(target, responseHits);
+    if (structuredOffers.length > 0) {
+      return structuredOffers;
+    }
+
+    if (target.structuredOnly) {
       return [];
     }
+
+    return await page.$$eval('a[href*="/offers/"]', (links) => {
+      const seen = new Set();
+      return links.map((link) => {
+        const href = link.href || '';
+        if (!href || seen.has(href)) return null;
+        seen.add(href);
+        const card = link.closest('[data-test-ui], li, section, div');
+        const text = (card?.textContent || link.textContent || '').replace(/\s+/g, ' ').trim();
+        const prices = text.match(/\$[\d,.]+/g) || [];
+        const listPriceMatch = text.match(/Save:\s*\$[\d,.]+\s*\((\d+)%\)/i);
+        const image = card?.querySelector('img')?.src || null;
+        const title = link.getAttribute('title') || text.split('$')[0]?.trim() || '';
+        if (!title || title.length < 3) return null;
+        return {
+          Title: title,
+          Slug: href.split('/offers/')[1]?.split('?')[0] || '',
+          Photos: image ? [{ Url: image }] : [],
+          Items: [{
+            SalePrice: prices[0] || null,
+            ListPrice: prices[1] || null,
+            Attributes: listPriceMatch ? [{ Key: 'percentOff', Value: listPriceMatch[1] }] : [],
+          }],
+        };
+      }).filter(Boolean);
+    });
+  } finally {
+    if (page) await page.context().close().catch(() => {});
   }
 }
 
-async function scrape(minDiscountPct) {
+async function scrape(minDiscountPct, options = {}) {
   if (minDiscountPct === undefined) minDiscountPct = 70;
+  const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
   console.log('[Woot] Starting scrape...');
   var deals = [];
+  var seenIds = new Set();
 
   for (var i = 0; i < WOOT_CATEGORIES.length; i++) {
+    if (isAborted()) {
+      console.warn('[Woot] Aborted before starting ' + WOOT_CATEGORIES[i].name);
+      break;
+    }
+
     var cat = WOOT_CATEGORIES[i];
+    if (cat.enabled === false) {
+      console.log('[Woot] Skipping ' + cat.name + ': ' + cat.skipReason);
+      continue;
+    }
     try {
-      var offers = await fetchCategory(cat.slug);
+      var offers = await fetchCategoryOffers(cat);
       console.log('[Woot] ' + cat.name + ': ' + offers.length + ' offers');
 
       for (var j = 0; j < offers.length; j++) {
+        if (isAborted()) {
+          console.warn('[Woot] Aborted during ' + cat.name);
+          break;
+        }
         var offer = offers[j];
-        if (!offer) continue;
+        if (!offer || offer.SoldOut) continue;
 
-        var name = offer.title || offer.name || '';
-        var url = offer.url || offer.fullUrl || ('https://www.woot.com/' + cat.slug + '/offers/' + (offer.urlKey || ''));
-        var price = parseFloat(offer.minPrice || offer.salePrice || offer.price || 0);
-        var listPrice = parseFloat(offer.maxListPrice || offer.listPrice || offer.regularPrice || 0);
-        var imgUrl = offer.image || (offer.photos && offer.photos[0]) || null;
+        var item = Array.isArray(offer.Items) ? offer.Items[0] : (offer.items && offer.items[0]) || {};
+        var name = offer.Title || offer.title || offer.name || '';
+        var slug = offer.Slug || offer.slug || offer.urlKey || '';
+        var url = offer.url || offer.fullUrl || (slug ? ('https://www.woot.com/offers/' + slug) : cat.url);
+        var price = parsePrice(String(item.SalePrice || offer.minPrice || offer.salePrice || offer.price || ''));
+        var listPrice = parsePrice(String(item.ListPrice || offer.maxListPrice || offer.listPrice || offer.regularPrice || ''));
+        var imgUrl = offer.image || offer.Image || (offer.Photos && offer.Photos[0] && offer.Photos[0].Url) || (offer.photos && offer.photos[0]) || null;
 
-        if (!price || price <= 0) continue;
+        if (!name || name.length < 3 || !url || !price || price <= 0) continue;
 
         var discountPct = 0;
         if (listPrice && listPrice > price) {
           discountPct = ((listPrice - price) / listPrice) * 100;
         } else if (offer.percentOff) {
           discountPct = parseFloat(offer.percentOff);
+        } else if (Array.isArray(item.Attributes)) {
+          var percentAttr = item.Attributes.find(function(attr) { return String(attr.Key).toLowerCase().includes('percent'); });
+          if (percentAttr) discountPct = parseFloat(percentAttr.Value || 0);
         }
 
         if (discountPct >= minDiscountPct) {
           console.log('[Woot] DEAL: ' + name + ' — $' + price + ' (' + Math.round(discountPct) + '% off)');
+          var productId = buildProductId('woot', url);
+          if (seenIds.has(productId)) continue;
+          seenIds.add(productId);
           deals.push({
-            productId:   'woot_' + Buffer.from(url).toString('base64').slice(0, 20),
+            productId:   productId,
             retailer:    'Woot',
             name:        name,
             url:         url,
@@ -93,6 +188,7 @@ async function scrape(minDiscountPct) {
     } catch (err) {
       console.error('[Woot] Error on ' + cat.name + ': ' + err.message);
     }
+    if (isAborted()) break;
     await sleep(2000);
   }
 

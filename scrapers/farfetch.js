@@ -8,7 +8,9 @@
 //  Monitors: Farfetch Sale, Outlet, and designer clearance pages
 // ============================================================
 
+const axios = require('axios');
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const FARFETCH_TARGETS = [
   {
@@ -32,6 +34,9 @@ const BLOCKED_PATTERNS = [
   /security check/i,
   /captcha/i,
   /forbidden/i,
+  /just a moment/i,
+  /checking your browser/i,
+  /cloudflare/i,
 ];
 
 async function readPageSnapshot(page) {
@@ -50,6 +55,24 @@ function looksBlocked(snapshot) {
   return BLOCKED_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+async function isHardBlocked(url) {
+  try {
+    const res = await axios.get(url, {
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0 Safari/537.36',
+        'Accept': 'text/html',
+      },
+      validateStatus: () => true,
+      maxRedirects: 5,
+    });
+    const html = String(res.data || '').toLowerCase().replace(/\s+/g, ' ');
+    return res.status >= 400 && (html.includes('access denied') || html.includes('verify you are human') || html.includes('just a moment'));
+  } catch {
+    return false;
+  }
+}
+
 async function scrape(minDiscountPct = 70, options = {}) {
   const isAborted = typeof options.isAborted === 'function' ? options.isAborted : () => false;
   console.log('[Farfetch] Starting designer sale scrape...');
@@ -65,6 +88,17 @@ async function scrape(minDiscountPct = 70, options = {}) {
 
     let page;
     try {
+      if (await isHardBlocked(target.url)) {
+        console.log('[Farfetch] ' + target.label + ': blocked at HTTP layer');
+        blockedTargets += 1;
+        emptyTargets += 1;
+        if (blockedTargets >= 1) {
+          console.warn('[Farfetch] Blocked by Farfetch/Cloudflare, stopping early.');
+          break;
+        }
+        continue;
+      }
+
       page = await newPage();
       await goto(page, target.url, { timeout: 15000 });
 
@@ -172,7 +206,7 @@ async function scrape(minDiscountPct = 70, options = {}) {
         if (discountPct >= minDiscountPct) {
           console.log(`[Farfetch] Glitch: ${p.name} - $${price} (${Math.round(discountPct)}% off)`);
           deals.push({
-            productId:   `farfetch_${Buffer.from(url).toString('base64').slice(0, 20)}`,
+            productId:   buildProductId('farfetch', url),
             retailer:    'Farfetch',
             name:        p.name,
             url,

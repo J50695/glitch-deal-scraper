@@ -10,7 +10,9 @@
 //  and flag anything that hits our glitch threshold.
 // ============================================================
 
+const axios = require('axios');
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const SSENSE_TARGETS = [
   {
@@ -34,6 +36,10 @@ const BLOCKED_PATTERNS = [
   /security check/i,
   /captcha/i,
   /forbidden/i,
+  /performing security verification/i,
+  /this website uses a security service/i,
+  /just a moment/i,
+  /cloudflare/i,
 ];
 
 async function readPageSnapshot(page) {
@@ -50,6 +56,24 @@ async function readPageSnapshot(page) {
 function looksBlocked(snapshot) {
   const text = `${snapshot.title} ${snapshot.body}`;
   return BLOCKED_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+async function isHardBlocked(url) {
+  try {
+    const res = await axios.get(url, {
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0 Safari/537.36',
+        'Accept': 'text/html',
+      },
+      validateStatus: () => true,
+      maxRedirects: 5,
+    });
+    const html = String(res.data || '').toLowerCase().replace(/\s+/g, ' ');
+    return res.status >= 400 && (html.includes('just a moment') || html.includes('cloudflare') || html.includes('security verification'));
+  } catch {
+    return false;
+  }
 }
 
 async function scrape(minDiscountPct, options = {}) {
@@ -69,6 +93,17 @@ async function scrape(minDiscountPct, options = {}) {
     var target = SSENSE_TARGETS[i];
     var page = null;
     try {
+      if (await isHardBlocked(target.url)) {
+        console.log('[SSENSE] ' + target.label + ': blocked at HTTP layer');
+        blockedTargets += 1;
+        emptyTargets += 1;
+        if (blockedTargets >= 1) {
+          console.warn('[SSENSE] Blocked by SSENSE/Cloudflare, stopping early.');
+          break;
+        }
+        continue;
+      }
+
       page = await newPage();
       await goto(page, target.url, { timeout: 15000 });
 
@@ -189,7 +224,7 @@ async function scrape(minDiscountPct, options = {}) {
         if (discountPct >= minDiscountPct) {
           console.log('[SSENSE] DEAL: ' + p.name + ' — $' + price + ' (' + Math.round(discountPct) + '% off)');
           deals.push({
-            productId:   'ssense_' + Buffer.from(url).toString('base64').slice(0, 20),
+            productId:   buildProductId('ssense', url),
             retailer:    'SSENSE',
             name:        p.name,
             url:         url,

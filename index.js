@@ -16,6 +16,7 @@ const path    = require('path');
 
 const db = require('./lib/db');
 const notifier = require('./lib/notifier');
+const { buildProductId } = require('./lib/product-id');
 const { closeBrowser } = require('./scrapers/playwright-base');
 
 // ── Scraper loading ───────────────────────────────────────────
@@ -184,7 +185,7 @@ const scrapers = [
   scraperDef('Lenovo', './scrapers/lenovo', { timeoutMs: 30000 }),
   scraperDef('Newegg', './scrapers/newegg'),
   scraperDef('6pm', './scrapers/sixpm'),
-  scraperDef('Nordstrom Rack', './scrapers/nordstromrack'),
+  scraperDef('Nordstrom Rack', './scrapers/nordstromrack', { tier: 'experimental', autoCooldown: true, timeoutMs: 45000 }),
   scraperDef('B&H Photo', './scrapers/bhphoto', { tier: 'experimental', autoCooldown: true, timeoutMs: 60000 }),
   scraperDef('Slickdeals', './scrapers/slickdeals'),
   scraperDef('OfferUp', './scrapers/offerup', { tier: 'experimental', autoCooldown: true, timeoutMs: 45000 }),
@@ -666,7 +667,7 @@ async function runScraper() {
         for (const deal of safeDeals) {
           try {
             const retailer = deal.retailer || deal.storeName || scraper.name;
-            const productId = deal.productId || (retailer + '_' + Buffer.from(deal.url || deal.name || retailer).toString('base64').slice(0, 20));
+            const productId = deal.productId || buildProductId(retailer, deal.url || deal.name || retailer);
             const name = deal.name;
             const url = deal.url || '';
             const imageUrl = deal.imageUrl || deal.image || null;

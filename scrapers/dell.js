@@ -6,21 +6,25 @@
 //  XPS, Alienware, and Precision machines happen regularly.
 // ============================================================
 
+const axios = require('axios');
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const DELL_TARGETS = [
   { url: 'https://www.dell.com/en-us/shop/dell-refurbished-products/ar/4613?appliedRefinements=104&o=pd',   label: 'Dell Outlet Laptops' },
   { url: 'https://www.dell.com/en-us/shop/dell-refurbished-products/ar/4613?appliedRefinements=507',        label: 'Dell Outlet Desktops' },
-  { url: 'https://www.dell.com/en-us/shop/laptop/xps-laptops/spd/xps-laptop?appliedRefinements=clearance', label: 'Dell XPS Clearance' },
 ];
 
 const DELL_CARD_SELECTOR = '[data-testid="product-stack-module"], .ps-product-card, .product-card, [class*="ProductCard"]';
 const BLOCKED_PATTERNS = [
   /access denied/i,
+  /you don't have permission to access/i,
   /verify you are human/i,
   /security check/i,
   /captcha/i,
   /forbidden/i,
+  /just a moment/i,
+  /checking your browser/i,
 ];
 
 async function readPageSnapshot(page) {
@@ -37,6 +41,26 @@ async function readPageSnapshot(page) {
 function looksBlocked(snapshot) {
   const text = `${snapshot.title} ${snapshot.body}`;
   return BLOCKED_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+async function isHardBlocked(url) {
+  try {
+    const res = await axios.get(url, {
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0 Safari/537.36',
+        'Accept': 'text/html',
+      },
+      validateStatus: () => true,
+    });
+    const html = String(res.data || '').replace(/\s+/g, ' ').slice(0, 500);
+    const wrongPage =
+      /computer accessories and peripherals \| dell usa/i.test(html) ||
+      /href="https:\/\/www\.dell\.com\/en-us\/shop\/accessories"/i.test(html);
+    return wrongPage || (res.status >= 400 && looksBlocked({ title: '', body: html }));
+  } catch {
+    return false;
+  }
 }
 
 async function scrape(minDiscountPct, options = {}) {
@@ -56,12 +80,35 @@ async function scrape(minDiscountPct, options = {}) {
     var target = DELL_TARGETS[i];
     var page = null;
     try {
+      if (await isHardBlocked(target.url)) {
+        console.log('[Dell] ' + target.label + ': blocked by Dell/Akamai at HTTP layer');
+        blockedTargets += 1;
+        emptyTargets += 1;
+        console.warn('[Dell] Blocked by Dell/Akamai, stopping early.');
+        break;
+      }
+
       page = await newPage();
       await goto(page, target.url, { timeout: 12000 });
-      await page.waitForSelector(DELL_CARD_SELECTOR, { timeout: 7000 }).catch(function() {});
-      await sleep(1500);
-
+      if (isAborted()) break;
+      await sleep(500);
       var snapshot = await readPageSnapshot(page);
+      var immediatelyBlocked = looksBlocked(snapshot);
+      if (immediatelyBlocked) {
+        blockedTargets += 1;
+        emptyTargets += 1;
+        console.log('[Dell] ' + target.label + ': blocked before catalog render');
+        if (blockedTargets >= 1) {
+          console.warn('[Dell] Blocked by Dell/Akamai, stopping early.');
+          break;
+        }
+        continue;
+      }
+      await page.waitForSelector(DELL_CARD_SELECTOR, { timeout: 7000 }).catch(function() {});
+      await sleep(800);
+      if (isAborted()) break;
+
+      snapshot = await readPageSnapshot(page);
 
       var products = await page.$$eval(
         DELL_CARD_SELECTOR,
@@ -143,7 +190,7 @@ async function scrape(minDiscountPct, options = {}) {
         if (discountPct >= minDiscountPct) {
           console.log('[Dell] DEAL: ' + p.name + ' — $' + price + ' (' + Math.round(discountPct) + '% off)');
           deals.push({
-            productId:   'dell_' + Buffer.from(url).toString('base64').slice(0, 20),
+            productId:   buildProductId('dell', url),
             retailer:    'Dell',
             name:        p.name,
             url:         url,
@@ -162,7 +209,7 @@ async function scrape(minDiscountPct, options = {}) {
       if (page) await page.context().close().catch(function() {});
     }
     if (isAborted()) break;
-    await sleep(1500);
+    await sleep(800);
   }
 
   console.log('[Dell] Done. ' + deals.length + ' glitch deal(s) found.');

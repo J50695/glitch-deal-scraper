@@ -1,4 +1,5 @@
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const TARGETS = [
   { url: 'https://slickdeals.net/deals/electronics/', label: 'Electronics' },
@@ -51,7 +52,7 @@ async function scrape(minDiscountPct = 40) {
 
         if (disc >= minDiscountPct) {
           deals.push({
-            productId: 'slick_' + Buffer.from(product.url || product.name).toString('base64').slice(0, 20),
+            productId: buildProductId('slick', product.url || product.name),
             retailer: 'Slickdeals',
             name: product.name + ' (' + product.store + ')',
             url: product.url,

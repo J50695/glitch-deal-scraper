@@ -1,4 +1,5 @@
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
+const { buildProductId } = require('../lib/product-id');
 
 const TARGETS = [
   { url: 'https://www.newegg.com/Shell-Shocker/EventSaleStore/ID-10381?cm_sp=homepage-pers-home+shell+shocker', label: 'Shell Shocker' },
@@ -63,7 +64,7 @@ async function scrape(minDiscountPct = 40) {
         const disc = ((was - price) / was) * 100;
         if (disc >= minDiscountPct) {
           deals.push({
-            productId: 'newegg_' + Buffer.from(product.url || product.name).toString('base64').slice(0, 20),
+            productId: buildProductId('newegg', product.url || product.name),
             retailer: 'Newegg',
             name: product.name,
             url: product.url,
