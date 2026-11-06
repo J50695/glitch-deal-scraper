@@ -25,12 +25,18 @@ const BESTBUY_TARGETS = [
   },
 ];
 
-async function scrape(minDiscountPct = 70) {
+async function scrape(minDiscountPct = 70, options = {}) {
+  const isAborted = options.isAborted || (() => false);
+  const targets = options.shoppingConfig?.mode === 'personal' ? [
+    { url: 'https://www.bestbuy.com/site/searchpage.jsp?st=ps5+pro', label: 'Best Buy - PS5 Pro' },
+    { url: 'https://www.bestbuy.com/site/searchpage.jsp?st=tv+sale', label: 'Best Buy - TVs' },
+  ] : BESTBUY_TARGETS;
   console.log('[Best Buy] Starting scrape...');
   const deals = [];
   let emptyTargets = 0;
 
-  for (const target of BESTBUY_TARGETS) {
+  for (const target of targets) {
+    if (isAborted()) break;
     let page;
     try {
       page = await newPage();
@@ -84,6 +90,7 @@ async function scrape(minDiscountPct = 70) {
       }
 
       for (const p of products) {
+        if (isAborted()) break;
         if (!p.name || !p.url || !p.priceStr) continue;
         const price    = parsePrice(p.priceStr);
         const wasPrice = parsePrice(p.wasStr);
@@ -120,6 +127,7 @@ async function scrape(minDiscountPct = 70) {
     } finally {
       if (page) await page.context().close().catch(() => {});
     }
+    if (isAborted()) break;
     await sleep(1000);
   }
   console.log('[Best Buy] Done. ' + deals.length + ' glitch deal(s) found.');

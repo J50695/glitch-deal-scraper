@@ -1,5 +1,7 @@
 const { newPage, goto, parsePrice, sleep } = require('./playwright-base');
 const { buildProductId } = require('../lib/product-id');
+const axios = require('axios');
+const { parseSlickdealsHtml } = require('../lib/slickdeals-data');
 
 const TARGETS = [
   { url: 'https://slickdeals.net/deals/electronics/', label: 'Electronics' },
@@ -9,13 +11,40 @@ const TARGETS = [
   { url: 'https://slickdeals.net/deals/shoes/', label: 'Shoes' },
 ];
 
-async function scrape(minDiscountPct = 40) {
+async function scrape(minDiscountPct = 40, options = {}) {
+  const isAborted = options.isAborted || (() => false);
+  const shopping = options.shoppingConfig;
+  const targets = shopping?.mode === 'personal'
+    ? shopping.rules.filter((rule) => rule.enabled !== false && rule.searchQuery).map((rule) => ({
+      url: 'https://slickdeals.net/search?' + new URLSearchParams({ q: rule.searchQuery, sort: 'recent' }),
+      label: rule.label,
+    }))
+    : TARGETS;
   console.log('[Slickdeals] Starting...');
   const deals = [];
+  const seenIds = new Set();
 
-  for (const target of TARGETS) {
+  for (const target of targets) {
+    if (isAborted()) break;
     let page;
     try {
+      const response = await axios.get(target.url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/html' } }).catch(() => null);
+      const structured = response && parseSlickdealsHtml(response.data, { maxAgeDays: shopping?.maxDealAgeDays || 7 });
+      if (isAborted()) break;
+      if (structured !== null && structured !== false) {
+        console.log('[Slickdeals] ' + target.label + ': ' + structured.length + ' active recent items');
+        for (const deal of structured) {
+          if (deal.discountPct < minDiscountPct || seenIds.has(deal.productId)) continue;
+          seenIds.add(deal.productId);
+          deals.push({ ...deal, source: 'Slickdeals ' + target.label });
+        }
+        continue;
+      }
+      // Search pages require current structured metadata to exclude expired posts.
+      if (shopping?.mode === 'personal') {
+        console.warn('[Slickdeals] Search data unavailable: ' + target.label);
+        continue;
+      }
       page = await newPage();
       await goto(page, target.url);
       await sleep(2500);
@@ -41,6 +70,7 @@ async function scrape(minDiscountPct = 40) {
       console.log('[Slickdeals] ' + target.label + ': ' + products.length + ' items');
 
       for (const product of products) {
+        if (isAborted()) break;
         if (!product.name || !product.priceStr) continue;
         const price = parsePrice(product.priceStr);
         const was = parsePrice(product.wasStr);
@@ -51,8 +81,11 @@ async function scrape(minDiscountPct = 40) {
         if (was && was > price) disc = ((was - price) / was) * 100;
 
         if (disc >= minDiscountPct) {
+          const productId = buildProductId('slick', product.url || product.name);
+          if (seenIds.has(productId)) continue;
+          seenIds.add(productId);
           deals.push({
-            productId: buildProductId('slick', product.url || product.name),
+            productId,
             retailer: 'Slickdeals',
             name: product.name + ' (' + product.store + ')',
             url: product.url,
@@ -70,7 +103,8 @@ async function scrape(minDiscountPct = 40) {
       if (page) await page.context().close().catch(() => {});
     }
 
-    await sleep(2000);
+    if (isAborted()) break;
+    await sleep(1000);
   }
 
   console.log('[Slickdeals] Done. ' + deals.length + ' deal(s).');

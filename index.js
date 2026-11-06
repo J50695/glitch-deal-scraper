@@ -17,7 +17,10 @@ const path    = require('path');
 const db = require('./lib/db');
 const notifier = require('./lib/notifier');
 const { buildProductId } = require('./lib/product-id');
+const { loadShoppingConfig, matchPersonalDeal, evaluatePersonalDeal } = require('./lib/personal-shopping');
 const { closeBrowser } = require('./scrapers/playwright-base');
+const shoppingConfig = loadShoppingConfig();
+const personalMode = shoppingConfig.mode === 'personal';
 
 // ── Scraper loading ───────────────────────────────────────────
 function safeRequire(modulePath) {
@@ -559,8 +562,9 @@ async function runScraperWithBudget(scraper) {
 
   try {
     return await Promise.race([
-      Promise.resolve().then(() => scraper.module.scrape(scraper.candidateDiscountPct, {
+      Promise.resolve().then(() => scraper.module.scrape(personalMode ? 0 : scraper.candidateDiscountPct, {
         isAborted: () => aborted,
+        shoppingConfig,
       })),
       new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
@@ -675,7 +679,13 @@ async function runScraper() {
             const normalPrice = deal.normalPrice || deal.originalPrice || null;
             const discountPct = deal.discountPct || deal.discount || 0;
             const sourceLabel = deal.source || scraper.name;
-            const { thresholdPct, trustScore, focusLabel } = resolveThresholdProfile(retailer, scraper.name);
+            const profile = resolveThresholdProfile(retailer, scraper.name);
+            const personalMatches = matchPersonalDeal(deal, shoppingConfig);
+            if (personalMode && personalMatches.length === 0) continue;
+            const thresholdPct = personalMode
+              ? Math.min(...personalMatches.map((rule) => rule.minDiscountPct))
+              : profile.thresholdPct;
+            const { trustScore, focusLabel } = profile;
 
             if (!name || !price) continue;
 
@@ -689,6 +699,7 @@ async function runScraper() {
               normalPrice,
               discountPct,
               source: sourceLabel,
+              merchant: deal.merchant || null,
               thresholdPct,
               focusLabel,
             };
@@ -715,12 +726,18 @@ async function runScraper() {
                 confirmedDiscount = historyDiscount;
                 confirmedNormal = avgPrice;
                 historyValidated = true;
-              } else if (discountPct < thresholdPct) {
+              } else if (!personalMode && discountPct < thresholdPct) {
                 continue;
               }
             }
 
-            if (confirmedDiscount < thresholdPct) continue;
+            const personalMatch = personalMode
+              ? evaluatePersonalDeal({ ...deal, price, discountPct: confirmedDiscount }, personalMatches)
+              : null;
+            if (personalMode ? !personalMatch : confirmedDiscount < thresholdPct) continue;
+            if (!confirmedNormal && confirmedDiscount > 0 && confirmedDiscount < 100) {
+              confirmedNormal = price / (1 - confirmedDiscount / 100);
+            }
 
             const qualityScore = computeDealQualityScore({
               scraper,
@@ -739,7 +756,8 @@ async function runScraper() {
             const alertId = db.recordAlert({
               productDbId,
               glitchPrice: price,
-              normalPrice: confirmedNormal || normalPrice,
+              // Existing databases require a value even for a price-only target.
+              normalPrice: confirmedNormal || normalPrice || price,
               discountPct: confirmedDiscount,
               retailer,
               qualityScore,
@@ -758,6 +776,7 @@ async function runScraper() {
               signalLabel,
               sourceLabel,
               trustScore,
+              personalMatch,
               trackedUrls: {
                 discord: buildTrackedUrl(alertId, 'discord', url),
                 email: buildTrackedUrl(alertId, 'email', url),
@@ -870,6 +889,8 @@ async function runScraper() {
 
     if (allNewDeals.length > 0) {
       allNewDeals.sort((a, b) => {
+        const priorityDiff = (b.personalMatch?.priority || 0) - (a.personalMatch?.priority || 0);
+        if (priorityDiff !== 0) return priorityDiff;
         const scoreDiff = (b.qualityScore || 0) - (a.qualityScore || 0);
         if (scoreDiff !== 0) return scoreDiff;
         const discountDiff = (b.discountPct || 0) - (a.discountPct || 0);
@@ -944,10 +965,13 @@ app.get('/api/stats', (req, res) => {
     discordLinked: !!process.env.DISCORD_WEBHOOK_URL,
     emailLinked: !!process.env.EMAIL_USER,
     keepaLinked: !!process.env.KEEPA_API_KEY,
+    shoppingMode: shoppingConfig.mode,
   });
 });
 
 app.get('/api/runs', (req, res) => res.json(runLog));
+
+app.get('/api/shopping-list', (req, res) => res.json(shoppingConfig));
 
 app.get('/api/scrapers', (req, res) => {
   res.json(scrapers.map(buildScraperSummary));
@@ -1034,6 +1058,7 @@ app.listen(PORT, () => {
   console.log('  Interval   → every ' + SCRAPE_INTERVAL_MINS + ' minutes');
   console.log('  Min Disc.  → ' + MIN_DISCOUNT_PCT + '% off');
   console.log('  Min Score  → ' + MIN_ALERT_SCORE);
+  console.log('  Shopping   → ' + shoppingConfig.mode + (personalMode ? ' (' + shoppingConfig.rules.map((rule) => rule.label).join(', ') + ')' : ''));
   console.log('  Re-alert   → ' + ALERT_COOLDOWN_HOURS + 'h cooldown, ' + ALERT_STICKY_HOURS + 'h sticky');
   console.log('  Timeout    → ' + Math.round(SCRAPER_TIMEOUT_MS / 1000) + 's per scraper');
   console.log('  Tracking   → ' + (PUBLIC_BASE_URL || '/go/:alertId (dashboard only)'));

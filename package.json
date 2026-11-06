@@ -4,7 +4,8 @@
   "description": "Monitors major retailers 24/7 for price glitches and fires instant Discord alerts.",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "axios": "^1.6.0",

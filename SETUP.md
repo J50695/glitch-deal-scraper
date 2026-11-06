@@ -59,6 +59,37 @@ The first scan starts 15 seconds after launch. After that, every 10 minutes.
 
 ## Recommended Production Defaults
 
+### Personal Shopping
+
+`shopping-list.json` now defaults to `personal` mode: alerts are limited to PS5 Pro
+consoles, Nike/Jordan shoes, designer clothes/shoes, clothes, and TVs. PS5 Pro
+matches are prioritized first. The initial discount floors are 10%, 40%, 50%,
+50%, and 30%, respectively. They are adjustable preferences, not market-price claims.
+
+- Set a rule's `maxPrice` to your dollar budget. When set, it is a hard ceiling;
+  a price at or below the ceiling can qualify without a known reference price.
+- Leave `maxPrice: null` to use the rule's minimum discount instead.
+- Leave `sizes: []` to see all sizes. Specified sizes require observed
+  `availableSizes` metadata; a listing with unknown size availability is excluded.
+- TV rules accept `minScreenInches` and `maxScreenInches`. Leave them null for all sizes.
+- Set `enabled: false` on any rule to pause that interest.
+- Restart/redeploy after changing the file. Inspect the loaded preferences at
+  `/api/shopping-list` and mode at `/api/stats`.
+- Set `SHOPPING_MODE=all` to restore the broad retailer-threshold alerts;
+  `SHOPPING_MODE=personal` enables the personal rules. `SHOPPING_LIST_FILE`
+  optionally points to another JSON file with the same format.
+
+Personal mode collects lower-discount candidates before applying your rules.
+Best Buy searches PS5 Pro and TVs; Slickdeals searches each enabled interest
+using current structured search data. Posts marked expired or older than
+`maxDealAgeDays` (default 7) are excluded. Other retailer coverage still depends
+on their existing category pages and site access.
+
+OfferUp's hard-coded resale estimates are excluded from personal alerts.
+Large markdowns are labeled **possible pricing mistakes**, not verified errors.
+Posted prices, size, condition, shipping, taxes, and checkout availability still
+need to be checked at the retailer. Existing duplicate cooldowns remain active.
+
 - Keep `Newegg`, `Slickdeals`, `Best Buy`, `Woot`, and your strongest sources on every run.
 - Run blocked or flaky sources less often with `SCRAPER_RUN_INTERVALS`.
 - Set `PUBLIC_BASE_URL` on Railway so Discord and email clicks route through `/go/:alertId` and show up in the dashboard yield metrics.
