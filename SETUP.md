@@ -63,12 +63,21 @@ The first scan starts 15 seconds after launch. After that, every 10 minutes.
 
 `shopping-list.json` now defaults to `personal` mode: alerts are limited to PS5 Pro
 consoles, Nike/Jordan shoes, designer clothes/shoes, clothes, and TVs. PS5 Pro
-matches are prioritized first. The initial discount floors are 10%, 40%, 50%,
-50%, and 30%, respectively. They are adjustable preferences, not market-price claims.
+matches are prioritized first. `ranking: "lowest-price"` selects the three lowest
+listed prices found per interest across the sources that ran in each scan.
+Discount floors are zero, so a cheap item can qualify with a small discount or
+an unknown reference price. These are the lowest prices found in that scan;
+shipping/tax, sizes, TV specifications, condition and source coverage can differ.
 
 - Set a rule's `maxPrice` to your dollar budget. When set, it is a hard ceiling;
   a price at or below the ceiling can qualify without a known reference price.
 - Leave `maxPrice: null` to use the rule's minimum discount instead.
+- `maxAlertsPerRule` controls the per-interest shortlist (default 3).
+  Items are selected before repeat cooldowns, so a suppressed repeat does not
+  cause a more expensive item to be substituted. Only selected alerts are recorded.
+- Set a positive `minDiscountPct` to require a discount for a specific interest.
+  `ranking: "quality"` restores score-based ordering within each interest;
+  lowest-price mode does not apply the global `MIN_ALERT_SCORE` cutoff.
 - Leave `sizes: []` to see all sizes. Specified sizes require observed
   `availableSizes` metadata; a listing with unknown size availability is excluded.
 - TV rules accept `minScreenInches` and `maxScreenInches`. Leave them null for all sizes.

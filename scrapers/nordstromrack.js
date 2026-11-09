@@ -94,9 +94,9 @@ async function scrape(minDiscountPct = 40, options = {}) {
         if (!product.name || !product.priceStr) continue;
         const price = parsePrice(product.priceStr);
         const was = parsePrice(product.wasStr);
-        if (!price || !was || was <= price) continue;
+        if (!price) continue;
 
-        const disc = ((was - price) / was) * 100;
+        const disc = was > price ? ((was - price) / was) * 100 : 0;
         if (disc >= minDiscountPct) {
           deals.push({
             productId: buildProductId('nrack', product.url || product.name),
@@ -105,7 +105,7 @@ async function scrape(minDiscountPct = 40, options = {}) {
             url: product.url,
             imageUrl: product.imgSrc || null,
             price,
-            normalPrice: was,
+            normalPrice: was > price ? was : null,
             discountPct: disc,
             source: 'Nordstrom Rack ' + target.label,
           });

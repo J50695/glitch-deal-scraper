@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { loadShoppingConfig, matchPersonalDeal, evaluatePersonalDeal } = require('../lib/personal-shopping');
+const { loadShoppingConfig, matchPersonalDeal, evaluatePersonalDeal, selectPersonalDeals } = require('../lib/personal-shopping');
 const { parseSlickdealsHtml } = require('../lib/slickdeals-data');
 
 const config = loadShoppingConfig({});
@@ -39,6 +39,25 @@ test('a configured target price is a ceiling and does not require a discount bas
   const high = deal('PS5 Pro', { price: 460, discountPct: 80 });
   assert.equal(evaluatePersonalDeal(high, matchPersonalDeal(high, settings)), null);
   assert.equal(evaluatePersonalDeal(deal('PS5 Pro', { price: -1 }), matchPersonalDeal(low, settings)), null);
+});
+
+test('zero discount floors accept a listed price without a claimed reference price', () => {
+  const item = deal('PS5 Pro', { discountPct: 0 });
+  assert.ok(evaluatePersonalDeal(item, matchPersonalDeal(item, config)));
+  const settings = structuredClone(config);
+  settings.rules.find((rule) => rule.id === 'ps5-pro').minDiscountPct = 10;
+  assert.equal(evaluatePersonalDeal(item, matchPersonalDeal(item, settings)), null);
+});
+
+test('cheapest selection caps each category separately and does not repeat identical products', () => {
+  const candidates = [
+    ...[30, 10, 20, 40].map((price) => deal('Nike Air Max shoes', { productId: 'shoe' + price, price })),
+    deal('Samsung 65-inch TV', { productId: 'tv', price: 200 }),
+  ].map((item) => ({ ...item, personalMatch: evaluatePersonalDeal(item, matchPersonalDeal(item, config)) }));
+  candidates.push(candidates[1]);
+  const selected = selectPersonalDeals(candidates, config);
+  assert.deepEqual(selected.filter((item) => item.personalMatch.ruleId === 'nike-shoes').map((item) => item.price), [10, 20, 30]);
+  assert.equal(selected.filter((item) => item.personalMatch.ruleId === 'tvs').length, 1);
 });
 
 test('size and screen requirements need observed matching data', () => {

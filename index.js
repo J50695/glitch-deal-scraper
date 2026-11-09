@@ -17,7 +17,7 @@ const path    = require('path');
 const db = require('./lib/db');
 const notifier = require('./lib/notifier');
 const { buildProductId } = require('./lib/product-id');
-const { loadShoppingConfig, matchPersonalDeal, evaluatePersonalDeal } = require('./lib/personal-shopping');
+const { loadShoppingConfig, matchPersonalDeal, evaluatePersonalDeal, selectPersonalDeals } = require('./lib/personal-shopping');
 const { closeBrowser } = require('./scrapers/playwright-base');
 const shoppingConfig = loadShoppingConfig();
 const personalMode = shoppingConfig.mode === 'personal';
@@ -607,7 +607,8 @@ async function runScraper() {
   console.log('🔍 Scrape run #' + runCount + ' — ' + new Date().toLocaleString());
   console.log('═'.repeat(60));
 
-  const allNewDeals = [];
+  let allNewDeals = [];
+  const pendingScraperRuns = [];
   const watchdogAlerts = [];
 
   try {
@@ -713,8 +714,7 @@ async function runScraper() {
               price,
             });
 
-            const repeatGate = shouldSuppressRepeatAlert(productDbId, price);
-            if (repeatGate.suppress) continue;
+            if (!personalMode && shouldSuppressRepeatAlert(productDbId, price).suppress) continue;
 
             let confirmedDiscount = discountPct;
             let confirmedNormal = normalPrice;
@@ -751,9 +751,9 @@ async function runScraper() {
             });
             const signalLabel = qualitySignalLabel(qualityScore);
 
-            if (qualityScore < MIN_ALERT_SCORE) continue;
+            if (!(personalMode && shoppingConfig.ranking === 'lowest-price') && qualityScore < MIN_ALERT_SCORE) continue;
 
-            const alertId = db.recordAlert({
+            const alertId = personalMode ? null : db.recordAlert({
               productDbId,
               glitchPrice: price,
               // Existing databases require a value even for a price-only target.
@@ -768,6 +768,8 @@ async function runScraper() {
 
             confirmedDeals.push({
               ...normalizedDeal,
+              productDbId,
+              scraperName: scraper.name,
               alertId,
               discountPct: confirmedDiscount,
               normalPrice: confirmedNormal || normalPrice,
@@ -799,7 +801,7 @@ async function runScraper() {
         const watchdog = finalizeScraperState(scraper, {
           status,
           found: safeDeals.length,
-          alerted: confirmedDeals.length,
+          alerted: personalMode ? 0 : confirmedDeals.length,
           ms,
           reason: safeDeals.length === 0 ? 'Returned no candidate deals' : null,
         });
@@ -808,18 +810,18 @@ async function runScraper() {
           status,
           health: scraperStates[scraper.name].health,
           found: safeDeals.length,
-          alerted: confirmedDeals.length,
+          alerted: personalMode ? 0 : confirmedDeals.length,
           ms,
           emptyStreak: scraperStates[scraper.name].emptyStreak,
         };
 
-        db.recordScraperRun({
+        const scraperRunRecord = {
           runNumber: runCount,
           scraperName: scraper.name,
           tier: scraper.tier,
           status,
           found: safeDeals.length,
-          alerted: confirmedDeals.length,
+          alerted: personalMode ? 0 : confirmedDeals.length,
           durationMs: ms,
           details: {
             health: scraperStates[scraper.name].health,
@@ -828,7 +830,9 @@ async function runScraper() {
             timeoutStreak: scraperStates[scraper.name].timeoutStreak,
             cooldownUntil: scraperStates[scraper.name].cooldownUntil,
           },
-        });
+        };
+        if (personalMode) pendingScraperRuns.push(scraperRunRecord);
+        else db.recordScraperRun(scraperRunRecord);
 
         if (watchdog) {
           watchdogAlerts.push(watchdog);
@@ -836,7 +840,7 @@ async function runScraper() {
         }
 
         allNewDeals.push(...confirmedDeals);
-        console.log('[' + scraper.name + '] ✅ ' + safeDeals.length + ' raw → ' + confirmedDeals.length + ' confirmed glitches (threshold ' + scraper.thresholdPct + '% / cadence ' + scraper.cadenceRuns + 'x)');
+        console.log('[' + scraper.name + '] ✅ ' + safeDeals.length + ' raw → ' + confirmedDeals.length + (personalMode ? ' shopping candidates awaiting selection' : ' confirmed glitches') + ' (threshold ' + scraper.thresholdPct + '% / cadence ' + scraper.cadenceRuns + 'x)');
       } catch (err) {
         const ms = Date.now() - scraperStart;
         const status = err.code === 'SCRAPER_TIMEOUT' ? 'timeout' : 'error';
@@ -887,8 +891,42 @@ async function runScraper() {
       }
     }
 
+    if (personalMode) {
+      // Pick the cheapest across sources before cooldowns, so repeats cannot promote pricier alternatives.
+      const selected = selectPersonalDeals(allNewDeals, shoppingConfig);
+      allNewDeals = [];
+      for (const deal of selected) {
+        if (shouldSuppressRepeatAlert(deal.productDbId, deal.price).suppress) continue;
+        const alertId = db.recordAlert({
+          productDbId: deal.productDbId,
+          glitchPrice: deal.price,
+          normalPrice: deal.normalPrice || deal.price,
+          discountPct: deal.discountPct,
+          retailer: deal.retailer,
+          qualityScore: deal.qualityScore,
+          thresholdPct: deal.thresholdPct,
+          signalLabel: deal.signalLabel,
+          sourceLabel: deal.sourceLabel,
+        });
+        allNewDeals.push({
+          ...deal, alertId,
+          trackedUrls: {
+            discord: buildTrackedUrl(alertId, 'discord', deal.url),
+            email: buildTrackedUrl(alertId, 'email', deal.url),
+            dashboard: buildTrackedUrl(alertId, 'dashboard', deal.url),
+          },
+        });
+        scraperStates[deal.scraperName].lastAlerted += 1;
+        runSummary.scrapers[deal.scraperName].alerted += 1;
+      }
+      for (const record of pendingScraperRuns) {
+        record.alerted = runSummary.scrapers[record.scraperName].alerted;
+        db.recordScraperRun(record);
+      }
+    }
+
     if (allNewDeals.length > 0) {
-      allNewDeals.sort((a, b) => {
+      if (!personalMode) allNewDeals.sort((a, b) => {
         const priorityDiff = (b.personalMatch?.priority || 0) - (a.personalMatch?.priority || 0);
         if (priorityDiff !== 0) return priorityDiff;
         const scoreDiff = (b.qualityScore || 0) - (a.qualityScore || 0);

@@ -1,11 +1,13 @@
 {
   "mode": "personal",
+  "ranking": "lowest-price",
+  "maxAlertsPerRule": 3,
   "maxDealAgeDays": 7,
   "rules": [
-    { "id": "ps5-pro", "label": "PS5 Pro console", "kind": "ps5-pro", "searchQuery": "\"PS5 Pro\"", "minDiscountPct": 10, "maxPrice": null, "priority": 100 },
-    { "id": "nike-shoes", "label": "Nike and Jordan shoes", "kind": "nike-shoes", "searchQuery": "Nike shoes", "minDiscountPct": 40, "maxPrice": null, "sizes": [], "priority": 80 },
-    { "id": "designer", "label": "Designer clothes and shoes", "kind": "designer", "searchQuery": "Gucci Prada Burberry Versace Balenciaga", "minDiscountPct": 50, "maxPrice": null, "sizes": [], "priority": 70 },
-    { "id": "tvs", "label": "TVs", "kind": "tv", "searchQuery": "TV", "minDiscountPct": 30, "maxPrice": null, "minScreenInches": null, "maxScreenInches": null, "priority": 60 },
-    { "id": "clothes", "label": "Clothes", "kind": "clothes", "searchQuery": "clothing", "minDiscountPct": 50, "maxPrice": null, "sizes": [], "priority": 50 }
+    { "id": "ps5-pro", "label": "PS5 Pro console", "kind": "ps5-pro", "searchQuery": "\"PS5 Pro\"", "minDiscountPct": 0, "maxPrice": null, "priority": 100 },
+    { "id": "nike-shoes", "label": "Nike and Jordan shoes", "kind": "nike-shoes", "searchQuery": "Nike shoes", "minDiscountPct": 0, "maxPrice": null, "sizes": [], "priority": 80 },
+    { "id": "designer", "label": "Designer clothes and shoes", "kind": "designer", "searchQuery": "Gucci Prada Burberry Versace Balenciaga", "minDiscountPct": 0, "maxPrice": null, "sizes": [], "priority": 70 },
+    { "id": "tvs", "label": "TVs", "kind": "tv", "searchQuery": "TV", "minDiscountPct": 0, "maxPrice": null, "minScreenInches": null, "maxScreenInches": null, "priority": 60 },
+    { "id": "clothes", "label": "Clothes", "kind": "clothes", "searchQuery": "clothing", "minDiscountPct": 0, "maxPrice": null, "sizes": [], "priority": 50 }
   ]
 }

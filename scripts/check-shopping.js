@@ -1,4 +1,4 @@
-const { loadShoppingConfig, matchPersonalDeal, evaluatePersonalDeal } = require('../lib/personal-shopping');
+const { loadShoppingConfig, matchPersonalDeal, evaluatePersonalDeal, selectPersonalDeals } = require('../lib/personal-shopping');
 const { parseSlickdealsHtml } = require('../lib/slickdeals-data');
 
 // Read-only diagnostic: no database writes, browser, or Discord messages.
@@ -17,10 +17,14 @@ async function main() {
       const matched = items.map((item) => ({ item, matches: matchPersonalDeal(item, { ...config, mode: 'personal' }) }))
         .filter(({ matches }) => matches.some((entry) => entry.id === rule.id));
       const qualified = matched.filter(({ item, matches }) => evaluatePersonalDeal(item, matches));
+      const selected = selectPersonalDeals(qualified.map(({ item, matches }) => ({
+        ...item, personalMatch: evaluatePersonalDeal(item, matches),
+      })), config);
       console.log(JSON.stringify({
         interest: rule.label, recentResults: items.length, matching: matched.length,
         qualifying: qualified.length,
-        sample: qualified.slice(0, 2).map(({ item }) => ({ name: item.name, price: item.price, url: item.url })),
+        selected: selected.length,
+        sample: selected.slice(0, 2).map((item) => ({ name: item.name, price: item.price, url: item.url })),
       }));
     } catch (error) {
       console.error(JSON.stringify({ interest: rule.label, error: error.message }));
